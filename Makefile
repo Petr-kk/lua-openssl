@@ -166,7 +166,7 @@ all: $T.so
 	@echo "Target system: "$(SYS)
 
 $T.so: lib$T.a
-	$(CC) -shared -o $@ src/openssl.o -L. -l$T $(LDFLAGS)
+	$(CC) -shared -o $@ src/openssl.o -L. -l$T $(LDFLAGS) $(MYLDFLAGS)
 
 lib$T.a: $(OBJS)
 	$(AR) rcs $@ $?
