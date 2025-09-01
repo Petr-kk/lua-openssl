@@ -58,6 +58,7 @@ digest, cipher, x509, pkcs7, cms and so on, be write as modules.
 digest() equals with digest.digest(), same cipher() equals with cipher.cipher().
 
 ## documentation
+## Documentation
 
 Document please see [here](http://zhaozg.github.io/lua-openssl/index.html),
 that are generate by [LDoc](https://github.com/stevedonovan/LDoc).
@@ -139,8 +140,8 @@ lua_openssl_version, lua_version, openssl_version = openssl.version(true)
 
 ### Style
 
-Source code of lua-openssl tidy with [astyle](http://astyle.sourceforge.net/)
-`--style=allman --indent=spaces=2`
+Source code of lua-openssl tidy with [ClangFormat](https://clang.llvm.org/docs/ClangFormat.html)
+`clang-format --style=file src/*.c`
 
 ### Bugs
 
@@ -166,7 +167,7 @@ If you want to make lua-openssl static link with openssl, please given
 `OPENSSL_STATIC` flags, default will do dynamic link.
 
 ```bash
-    make OPENSSL_STAITC=1
+    make OPENSSL_STATIC=1
 ```
 
 ### Howto 2: Build on Windows with MSVC
@@ -208,7 +209,7 @@ Works with Lua5.1 (should support Lua5.2 by updating the config.win file).
 
    `cmake -Bbuild -H. -DOPENSSL_ROOT_DIR=... -DBUILD_SHARED_LUA_OPENSSL=OFF && cd build && make`
 
-### Howto 5: Handle fail or error
+### Howto 6: Handle fail or error
 
 Most lua-openssl function or methods return nil or false when error or
 failed, followed by string type error _reason_ and number type error _code_,
@@ -340,20 +341,48 @@ port = port or "8383";
 
 local cli = assert(bio.connect(host..':'..port,true))
 
-    while cli do
-        s = io.read()
-        if(#s>0) then
-            print(cli:write(s))
-            ss = cli:read()
-            assert(#s==#ss)
-        end
+while cli do
+    s = io.read()
+    if(#s>0) then
+        print(cli:write(s))
+        ss = cli:read()
+        assert(#s==#ss)
     end
-    print(openssl.errors())
+end
+print(openssl.errors())
 ```
 
-For more examples, please see test lua script file.
+### Example 7: SSL client access github.com
 
-### Example 7: aes-128-gcm
+```lua
+local openssl = require("openssl")
+
+-- prepare a SSL_CTX object
+local ctx = assert(openssl.ssl.ctx_new("TLSv1_2_client"))
+
+-- make a TCP connection, and do connect first
+local cli = assert(openssl.bio.connect("github:443", true))
+
+-- make a SSL connection over TCP
+local ssl = ctx:ssl(cli)
+-- set SNI name
+ssl:set("hostname", "echo.websocket.org")
+
+-- do SSL handshake
+assert(ssl:connect())
+
+-- send a HTTP request over SSL connection
+assert(ssl:write("GET / HTTP/1.1\r\nHost: github.com\r\nConnection: close\r\n\r\n"))
+
+-- read response
+print(ssl:read(4096))
+
+-- shutdown SSL connection and close TCP connection
+ssl:shutdown()
+cli:close()
+```
+
+### Example 8: aes-128-gcm
 
 ```lua
 local openssl = require('openssl')
@@ -397,11 +426,13 @@ assert(r==msg)
 print('Done')
 ```
 
+For more examples, please see test lua script file.
+
 ---
 
 **_lua-openssl License_**
 
-Copyright (c) 2011 - 2024 zhaozg, zhaozg(at)gmail.com
+Copyright (c) 2011 - 2025 zhaozg, zhaozg(at)gmail.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to

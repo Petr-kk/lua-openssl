@@ -1,3 +1,5 @@
+/* vim: set filetype=c : */
+
 /*=========================================================================*\
 * x509 routines
 * lua-openssl toolkit
@@ -10,8 +12,6 @@
 #include <lua.h>
 #include <lualib.h>
 #include <lauxlib.h>
-#include "auxiliar.h"
-#include "subsidiar.h"
 
 #include <assert.h>
 #include <string.h>
@@ -59,57 +59,15 @@
 */
 
 /*                              MNNFFPPS  */
-#define LOPENSSL_VERSION_NUM  0x0080500f
+#define LOPENSSL_VERSION_NUM  0x00a0100f
 #ifndef LOPENSSL_VERSION
-#define LOPENSSL_VERSION  "0.8.5"
+#define LOPENSSL_VERSION  "0.10.1"
 #endif
 
 #if OPENSSL_VERSION_NUMBER >= 0x10000000L
 #include <openssl/lhash.h>
 #define OPENSSL_HAVE_TS
 #define LHASH LHASH_OF(CONF_VALUE)
-#endif
-typedef unsigned char byte;
-
-#define MULTI_LINE_MACRO_BEGIN do {
-#ifdef _MSC_VER
-#define MULTI_LINE_MACRO_END  \
-__pragma(warning(push))   \
-__pragma(warning(disable:4127)) \
-} while(0)      \
-__pragma(warning(pop))
-#else
-#define MULTI_LINE_MACRO_END \
-} while(0)
-#endif
-
-/* Common */
-#include <time.h>
-#ifndef MAX_PATH
-#define MAX_PATH 260
-#endif
-
-#ifdef WIN32
-#define snprintf _snprintf
-#ifndef strcasecmp
-#define strcasecmp stricmp
-#endif
-#endif
-
-#ifdef _MSC_VER
-# ifndef inline
-#  define inline __inline
-# endif
-#endif
-
-#if defined(_AIX)
-# ifndef inline
-#  define inline __inline
-# endif
-#endif
-
-#if defined(__STDC__) && !defined(__STDC_VERSION__)
-#  define inline __inline
 #endif
 
 #define LUA_FUNCTION(X) int X(lua_State *L)
@@ -143,41 +101,6 @@ LUA_FUNCTION(luaopen_mac);
 LUA_FUNCTION(luaopen_param);
 #endif
 LUA_FUNCTION(luaopen_kdf);
-
-void openssl_add_method_or_alias(const OBJ_NAME *name, void *arg) ;
-void openssl_add_method(const OBJ_NAME *name, void *arg);
-
-#define CHECK_OBJECT(n,type,name) *(type**)auxiliar_checkclass(L,name,n)
-#define CHECK_GROUP(n,type,name)  *(type**)auxiliar_checkgroup(L,name,n)
-
-static inline void* openssl_getclass(lua_State *L, const char* name, int idx)
-{
-  void **p = (void**)auxiliar_getclassudata(L, name, idx);
-  return p!=NULL ? *p : NULL;
-}
-
-static inline void* openssl_getgroup(lua_State *L, const char* name, int idx)
-{
-  void **p = (void**)auxiliar_getgroupudata(L, name, idx);
-  return p!=NULL ? *p : NULL;
-}
-
-#define GET_OBJECT(n,type,name) ((type*)openssl_getclass(L,name,n))
-#define GET_GROUP(n,type,name)  ((type*)openssl_getgroup(L,name,n))
-
-#define PUSH_OBJECT(o, tname)                                   \
-  MULTI_LINE_MACRO_BEGIN                                        \
-  if(o) {                                                       \
-  *(void **)(lua_newuserdata(L, sizeof(void *))) = (void*)(o);  \
-  auxiliar_setclass(L,tname,-1);                                \
-  } else lua_pushnil(L);                                        \
-  MULTI_LINE_MACRO_END
-
-#define FREE_OBJECT(i)  (*(void**)lua_touserdata(L, i) = NULL)
-
-int openssl_register_lhash(lua_State* L);
-int openssl_register_engine(lua_State* L);
-
 LUA_FUNCTION(luaopen_srp);
 
 #endif

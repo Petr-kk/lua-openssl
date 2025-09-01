@@ -1,3 +1,5 @@
+/* vim: set filetype=c : */
+
 #ifndef OPENSSL_OPTIONS_H
 #define OPENSSL_OPTIONS_H
 
@@ -112,4 +114,3 @@ static LuaL_Enumeration ssl_options[] =
 };
 
 #endif
-

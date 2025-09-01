@@ -53,6 +53,7 @@ server = create_server(address.address, address.port, function(client)
   function scli:ondata(chunk)
     self:close()
   end
+
   function scli:onerror(err)
     print("onerr", err, ssl.error())
   end
@@ -68,14 +69,14 @@ local address = uv.tcp_getsockname(server)
 p("server", server, address)
 
 local timer, limit = nil, 0
-timer=setInterval(function()
+timer = setInterval(function()
   print(os.date(), count)
   collectgarbage()
   if limit > 5 then
     timer:close()
     server:close()
   end
-  limit = limit+1
+  limit = limit + 1
 end, 1000)
 
 uv.run("default")

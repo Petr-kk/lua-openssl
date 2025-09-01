@@ -44,8 +44,7 @@ function new_connection(i)
     end
   end)
 
-  function scli:ondata(chunk)
-  end
+  function scli:ondata(chunk) end
 
   function scli:onerror(err)
     print("onerror", err)
@@ -54,9 +53,11 @@ function new_connection(i)
   function scli:onend()
     self:close()
   end
+
   function scli:onclose()
     count = count - 1
   end
+
   return scli
 end
 
@@ -72,7 +73,7 @@ timer = setInterval(function()
   print(os.date(), count, concurancy)
   print(ssl.error())
   collectgarbage()
-  if (concurancy >= ncount) then
+  if concurancy >= ncount then
     timer:close()
   end
 end, 1000)
