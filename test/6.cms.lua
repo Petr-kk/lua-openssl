@@ -36,7 +36,7 @@ function TestCMS:testCompress()
     lu.assertEquals(msg, ret)
   else
     local tips = "WARNING: %d:%s, maybe openssl without compress support"
-    print(string.format(tips, code, err))
+    print(string.format(tips, code, tostring(err or 'unknown')))
   end
 end
 
@@ -88,6 +88,59 @@ function TestCMS:testSign()
   lu.assertEquals(msg, self.msg)
   assert(c1:get_signers()[1] == self.bob.cert)
 end
+
+-- add_signers: step-by-step signing on a partial CMS, see issue #412
+function TestCMS:testAddSigners()
+  -- create a partial CMS without a signer, then add one later
+  local c = assert(cms.sign(nil, nil, nil, {}, cms.flags.stream + cms.flags.partial))
+  -- add_signers returns the cms object itself for chaining
+  local ret = assert(c:add_signers(self.bob.cert, self.bob.key))
+  lu.assertEquals(ret, c)
+  assert(c:final(self.msg, cms.flags.binary))
+
+  local msg = assert(cms.verify(c, { self.bob.cert }, self.castore))
+  lu.assertEquals(msg, self.msg)
+  assert(c:get_signers()[1] == self.bob.cert)
+
+  -- second signer can be added as well
+  local c2 = assert(cms.sign(nil, nil, nil, {}, cms.flags.stream + cms.flags.partial))
+  assert(c2:add_signers(self.bob.cert, self.bob.key))
+  assert(c2:add_signers(self.alice.cert, self.alice.key))
+  assert(c2:final(self.msg, cms.flags.binary))
+  local signers = assert(c2:get_signers())
+  lu.assertEquals(#signers, 2)
+  msg = assert(cms.verify(c2, { self.bob.cert, self.alice.cert }, self.castore))
+  lu.assertEquals(msg, self.msg)
+end
+
+-- cms.sign accepts nil for the certs argument, see issue #411
+function TestCMS:testSignNoCerts()
+  local c1 = assert(cms.sign(self.bob.cert, self.bob.key, self.msg))
+  assert(cms.export(c1))
+  local msg = assert(cms.verify(c1, { self.bob.cert }, self.castore))
+  lu.assertEquals(msg, self.msg)
+
+  -- explicit nil as 4th argument must work too
+  local c2 = assert(cms.sign(self.bob.cert, self.bob.key, self.msg, nil))
+  msg = assert(cms.verify(c2, { self.bob.cert }, self.castore))
+  lu.assertEquals(msg, self.msg)
+end
+
+-- methods on an empty cms.new() object must not segfault, see issue #413
+function TestCMS:testEmptyObject()
+  local c = cms.new()
+  -- getters return a sane default instead of crashing
+  lu.assertFalse(c:detached())
+  lu.assertNil(c:content())
+  -- setters/ops return nil, err, code instead of crashing
+  local ok, err = c:detached(true)
+  lu.assertNil(ok)
+  lu.assertNotNil(err)
+  ok, err = c:final("hi")
+  lu.assertNil(ok)
+  lu.assertNotNil(err)
+end
+
 
 function TestCMS:testSignReceipt()
   local c1 = assert(cms.sign(self.bob.cert, self.bob.key, self.msg, { self.ca.cert }))

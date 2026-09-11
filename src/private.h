@@ -24,7 +24,16 @@ extern "C" {
 #endif
 
 #if (OPENSSL_VERSION_NUMBER >= 0x30000000L)
-#include "openssl/provider.h"
+#include <openssl/provider.h>
+/**
+ * The keys returned from the functions EVP_PKEY_get0_RSA(), EVP_PKEY_get0_DSA(),
+ * EVP_PKEY_get0_DH() and EVP_PKEY_get0_EC_KEY() were changed to have a "const"
+ * return type in OpenSSL 3.0
+ */
+#define EVP_PKEY_GET0_CONST(type) (const type*)
+#else
+#include <openssl/evp.h>
+#define EVP_PKEY_GET0_CONST(type) type*
 #endif
 
 typedef unsigned char byte;
@@ -141,7 +150,10 @@ int SSL_up_ref(SSL *s);
 int SSL_CTX_up_ref(SSL_CTX *ctx);
 int SSL_SESSION_up_ref(SSL_SESSION *s);
 
-DH *EVP_PKEY_get0_DH(EVP_PKEY *pkey);
+#if LIBRESSLV_LESS(0x4020000FL) || !defined(LIBRESSL_VERSION_NUMBER)
+DH *EVP_PKEY_get0_DH(EVP_PKEY_GET0_CONST(EVP_PKEY) pkey);
+#endif
+
 int DH_bits(const DH *dh);
 void DH_get0_key(const DH *dh,
                  const BIGNUM **pub_key, const BIGNUM **priv_key);
@@ -152,7 +164,10 @@ int DH_set0_pqg(DH *dh, BIGNUM *p, BIGNUM *q, BIGNUM *g);
 void DSA_get0_pqg(const DSA *dsa,
                   const BIGNUM **p, const BIGNUM **q, const BIGNUM **g);
 
-EC_KEY *EVP_PKEY_get0_EC_KEY(EVP_PKEY *pkey);
+#if LIBRESSLV_LESS(0x4020000FL) || !defined(LIBRESSL_VERSION_NUMBER)
+EC_KEY *EVP_PKEY_get0_EC_KEY(EVP_PKEY_GET0_CONST(EVP_PKEY) pkey);
+#endif
+
 void ECDSA_SIG_get0(const ECDSA_SIG *sig,
                     const BIGNUM **pr, const BIGNUM **ps);
 int ECDSA_SIG_set0(ECDSA_SIG *sig, BIGNUM *r, BIGNUM *s);
@@ -164,9 +179,12 @@ int RSA_set0_factors(RSA *r, BIGNUM *p, BIGNUM *q);
 int RSA_set0_crt_params(RSA *r, BIGNUM *dmp1, BIGNUM *dmq1, BIGNUM *iqmp);
 void RSA_get0_factors(const RSA *r, const BIGNUM **p, const BIGNUM **q);
 void RSA_get0_crt_params(const RSA *r, const BIGNUM **dmp1, const BIGNUM **dmq1, const BIGNUM **iqmp);
-RSA *EVP_PKEY_get0_RSA(EVP_PKEY *pkey);
 
-DSA *EVP_PKEY_get0_DSA(EVP_PKEY *pkey);
+#if LIBRESSLV_LESS(0x4020000FL) || !defined(LIBRESSL_VERSION_NUMBER)
+RSA *EVP_PKEY_get0_RSA(EVP_PKEY_GET0_CONST(EVP_PKEY) pkey);
+DSA *EVP_PKEY_get0_DSA(EVP_PKEY_GET0_CONST(EVP_PKEY) pkey);
+#endif
+
 int DSA_bits(const DSA *dsa);
 void DSA_get0_key(const DSA *d,
                   const BIGNUM **pub_key, const BIGNUM **priv_key);
@@ -236,6 +254,12 @@ const ASN1_OCTET_STRING *OCSP_resp_get0_signature(const OCSP_BASICRESP *bs);
 const X509_ALGOR *OCSP_resp_get0_tbs_sigalg(const OCSP_BASICRESP *bs);
 
 #endif /* < 1.1.0 */
+
+/* EVP_PKEY_dup was introduced in OpenSSL 3.0. Provide fallback for older versions. */
+#if OPENSSL_VERSION_NUMBER < 0x30000000L || defined(LIBRESSL_VERSION_NUMBER)
+EVP_PKEY *EVP_PKEY_dup(EVP_PKEY *pkey);
+#endif
+
 
 #define AUXILIAR_SETOBJECT(L, cval, ltype, idx, lvar) \
   do {                                                \
@@ -314,12 +338,23 @@ int openssl_push_x509_signature(lua_State *L, const X509_ALGOR *alg, const ASN1_
 #define PUSH_ASN1_OCTET_STRING(L, s)      openssl_push_asn1(L, (ASN1_STRING*)(s),  V_ASN1_OCTET_STRING)
 #define PUSH_ASN1_STRING(L, s)            openssl_push_asn1(L, (ASN1_STRING*)(s),  V_ASN1_UNDEF)
 
-int openssl_push_xname_asobject(lua_State*L, X509_NAME* xname);
+int openssl_push_xname_asobject(lua_State*L, const X509_NAME* xname);
 int openssl_push_bit_string_bitname(lua_State* L, const BIT_STRING_BITNAME* name);
 
 ASN1_OBJECT* openssl_get_asn1object(lua_State*L, int idx, int retnil);
 EC_GROUP* openssl_get_ec_group(lua_State* L, int ec_name_idx, int param_enc_idx,
                                int conv_form_idx);
+
+
+/* ec_util.c */
+int openssl_to_group_asn1_flag(lua_State *L, int i, const char *defval);
+int openssl_push_group_asn1_flag(lua_State *L, int flag);
+point_conversion_form_t openssl_to_point_conversion_form(lua_State *L, int i, const char *defval);
+int openssl_push_point_conversion_form(lua_State *L, point_conversion_form_t form);
+
+/* point.c affine_coordinates */
+int openssl_point_affine_coordinates(lua_State *L);
+
 int openssl_get_padding(lua_State *L, int idx, const char *defval);
 
 int openssl_register_xname(lua_State*L);
@@ -401,9 +436,39 @@ lua_State *openssl_mainthread(lua_State *L);
 #endif
 #endif
 
-#if (OPENSSL_VERSION_NUMBER >= 0x30000000L)
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L && !defined(LIBRESSL_VERSION_NUMBER)
+#include <openssl/core_names.h>
+#include <openssl/params.h>
+#include <openssl/param_build.h>
+
 int openssl_pushparams(lua_State *L, const OSSL_PARAM* params);
 OSSL_PARAM* openssl_toparams(lua_State *L, int idx);
+
+EVP_PKEY* openssl_new_pkey_rsa_with(const BIGNUM *n,
+                                    const BIGNUM *e,
+                                    const BIGNUM *d,
+                                    const BIGNUM *p,
+                                    const BIGNUM *q,
+                                    const BIGNUM *dmp1,
+                                    const BIGNUM *dmq1,
+                                    const BIGNUM *iqmp);
+
+EVP_PKEY* openssl_new_pkey_dsa_with(const BIGNUM *p,
+                                 const BIGNUM *q,
+                                 const BIGNUM *g,
+                                 const BIGNUM *pub_key,
+                                 const BIGNUM *priv_key);
+
+EVP_PKEY* openssl_new_pkey_dh_with(const BIGNUM *p,
+                                   const BIGNUM *q,
+                                   const BIGNUM *g,
+                                   const BIGNUM *pub_key,
+                                   const BIGNUM *priv_key);
+
+EVP_PKEY* openssl_new_pkey_ec_with(const EC_GROUP *group,
+                                   const BIGNUM *x,
+                                   const BIGNUM *y,
+                                   const BIGNUM *d);
 #endif
 
 #if defined(__cplusplus)

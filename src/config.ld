@@ -1,6 +1,6 @@
 project='lua-openssl'
-title='lua-openssl Docmentation'
-description='Openssl binding for Lua'
+title='lua-openssl Documentation'
+description='OpenSSL binding for Lua'
 format='discount'
 backtick_references=false
 dir='doc'

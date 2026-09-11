@@ -2,6 +2,8 @@
 ec module to create EC keys and do EC key processes.
 
 @module ec
+@usage
+  ec = require('openssl').ec
 */
 #include <openssl/engine.h>
 
@@ -10,457 +12,271 @@ ec module to create EC keys and do EC key processes.
 
 #if !defined(OPENSSL_NO_EC)
 
-static int openssl_push_group_asn1_flag(lua_State *L, int flag);
-static int openssl_push_point_conversion_form(lua_State *L, point_conversion_form_t form);
-
-static int
-openssl_ecpoint_affine_coordinates(lua_State *L)
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L && !defined(LIBRESSL_VERSION_NUMBER)
+EVP_PKEY* openssl_new_pkey_ec_with(const EC_GROUP *group,
+                                   const BIGNUM *x,
+                                   const BIGNUM *y,
+                                   const BIGNUM *d)
 {
-  EC_GROUP *g = CHECK_OBJECT(1, EC_GROUP, "openssl.ec_group");
-  EC_POINT *p = CHECK_OBJECT(2, EC_POINT, "openssl.ec_point");
-  int       ret = 0;
-  if (lua_gettop(L) == 2) {
-    BIGNUM *x = BN_new();
-    BIGNUM *y = BN_new();
-    if (EC_POINT_get_affine_coordinates(g, p, x, y, NULL) == 1) {
-      PUSH_BN(x);
-      PUSH_BN(y);
-      ret = 2;
-    };
-  } else {
-    BIGNUM *x = CHECK_OBJECT(3, BIGNUM, "openssl.bn");
-    BIGNUM *y = CHECK_OBJECT(4, BIGNUM, "openssl.bn");
-    ret = EC_POINT_set_affine_coordinates(g, p, x, y, NULL);
-    if (ret == 0) luaL_error(L, "EC_POINT_set_affine_coordinates fail");
-    ret = 0;
-  }
-  return ret;
-}
+  EVP_PKEY *pkey = NULL;
+  OSSL_PARAM_BLD *param_bld = OSSL_PARAM_BLD_new();
 
-static int
-openssl_eckey_group(lua_State *L)
-{
-  const EC_GROUP *g = openssl_get_ec_group(L, 1, 2, 3);
-  if (g) {
-    const EC_POINT *p = EC_GROUP_get0_generator(g);
-    p = EC_POINT_dup(p, g);
-    PUSH_OBJECT(g, "openssl.ec_group");
-    PUSH_OBJECT(p, "openssl.ec_point");
-    return 2;
-  }
-  return 0;
-};
+  if (param_bld) {
+    EVP_PKEY_CTX *ctx = NULL;
+    OSSL_PARAM *params = NULL;
+    const char *point_form = NULL;
+    const char *asn1_encoding = NULL;
+    unsigned char *point_buf = NULL;
+    int nid = EC_GROUP_get_curve_name(group);
+    int form = EC_GROUP_get_point_conversion_form(group);
+    int flags = EC_GROUP_get_asn1_flag(group);
 
-static int
-openssl_ec_group_parse(lua_State *L)
-{
-  const EC_GROUP *group = CHECK_OBJECT(1, EC_GROUP, "openssl.ec_group");
-  const EC_POINT *generator = EC_GROUP_get0_generator(group);
-  BN_CTX         *ctx = BN_CTX_new();
-  BIGNUM         *a, *b, *p, *order, *cofactor;
-
-  lua_newtable(L);
-  if (generator) {
-    generator = EC_POINT_dup(generator, group);
-    AUXILIAR_SETOBJECT(L, generator, "openssl.ec_point", -1, "generator");
-  }
-
-  order = BN_new();
-  EC_GROUP_get_order(group, order, ctx);
-  AUXILIAR_SETOBJECT(L, order, "openssl.bn", -1, "order");
-
-  cofactor = BN_new();
-  EC_GROUP_get_cofactor(group, cofactor, ctx);
-  AUXILIAR_SETOBJECT(L, cofactor, "openssl.bn", -1, "cofactor");
-
-  openssl_push_group_asn1_flag(L, EC_GROUP_get_asn1_flag(group));
-  lua_setfield(L, -2, "asn1_flag");
-
-  AUXILIAR_SET(L, -1, "degree", EC_GROUP_get_degree(group), integer);
-  AUXILIAR_SET(L, -1, "curve_name", EC_GROUP_get_curve_name(group), integer);
-
-  openssl_push_point_conversion_form(L, EC_GROUP_get_point_conversion_form(group));
-  lua_setfield(L, -2, "conversion_form");
-
-  AUXILIAR_SETLSTR(L, -1, "seed", EC_GROUP_get0_seed(group), EC_GROUP_get_seed_len(group));
-
-  a = BN_new();
-  b = BN_new();
-  p = BN_new();
-  EC_GROUP_get_curve(group, p, a, b, ctx);
-  lua_newtable(L);
-  {
-    AUXILIAR_SETOBJECT(L, p, "openssl.bn", -1, "p");
-    AUXILIAR_SETOBJECT(L, a, "openssl.bn", -1, "a");
-    AUXILIAR_SETOBJECT(L, b, "openssl.bn", -1, "b");
-  }
-  lua_setfield(L, -2, "curve");
-  BN_CTX_free(ctx);
-
-  return 1;
-}
-static int
-openssl_ec_group_free(lua_State *L)
-{
-  EC_GROUP *group = CHECK_OBJECT(1, EC_GROUP, "openssl.ec_group");
-  EC_GROUP_free(group);
-  return 0;
-}
-
-static int
-openssl_to_group_asn1_flag(lua_State *L, int i, const char *defval)
-{
-  const char *const flag[] = { "explicit", "named_curve", NULL };
-  int               f = luaL_checkoption(L, i, defval, flag);
-  int               form = 0;
-  if (f == 0)
-    form = 0;
-  else if (f == 1)
-    form = OPENSSL_EC_NAMED_CURVE;
-  else
-    luaL_argerror(L, i, "invalid paramater, only accept 'explicit' or 'named_curve'");
-  return form;
-}
-
-static int
-openssl_push_group_asn1_flag(lua_State *L, int flag)
-{
-  if (flag == 0)
-    lua_pushstring(L, "explicit");
-  else if (flag == 1)
-    lua_pushstring(L, "named_curve");
-  else
-    lua_pushnil(L);
-  return 1;
-}
-
-static int
-openssl_ec_group_asn1_flag(lua_State *L)
-{
-  EC_GROUP *group = CHECK_OBJECT(1, EC_GROUP, "openssl.ec_group");
-  int       asn1_flag;
-  if (lua_isnone(L, 2)) {
-    asn1_flag = EC_GROUP_get_asn1_flag(group);
-    openssl_push_group_asn1_flag(L, asn1_flag);
-    lua_pushinteger(L, asn1_flag);
-    return 2;
-  } else if (lua_isnumber(L, 2))
-    asn1_flag = luaL_checkint(L, 2);
-  else
-    asn1_flag = openssl_to_group_asn1_flag(L, 2, NULL);
-  EC_GROUP_set_asn1_flag(group, asn1_flag);
-  lua_pushvalue(L, 1);
-  return 1;
-}
-
-static point_conversion_form_t
-openssl_to_point_conversion_form(lua_State *L, int i, const char *defval)
-{
-  const char             *options[] = { "compressed", "uncompressed", "hybrid", NULL };
-  int                     f = luaL_checkoption(L, i, defval, options);
-  point_conversion_form_t form = 0;
-  if (f == 0)
-    form = POINT_CONVERSION_COMPRESSED;
-  else if (f == 1)
-    form = POINT_CONVERSION_UNCOMPRESSED;
-  else if (f == 2)
-    form = POINT_CONVERSION_HYBRID;
-  else
-    luaL_argerror(L, i, "invalid paramater, only support 'compressed', 'uncompressed' or 'hybrid'");
-  return form;
-}
-
-static int
-openssl_push_point_conversion_form(lua_State *L, point_conversion_form_t form)
-{
-  if (form == POINT_CONVERSION_COMPRESSED)
-    lua_pushstring(L, "compressed");
-  else if (form == POINT_CONVERSION_UNCOMPRESSED)
-    lua_pushstring(L, "uncompressed");
-  else if (form == POINT_CONVERSION_HYBRID)
-    lua_pushstring(L, "hybrid");
-  else
-    lua_pushnil(L);
-  return 1;
-}
-
-static int
-openssl_ec_group_point_conversion_form(lua_State *L)
-{
-  EC_GROUP               *group = CHECK_OBJECT(1, EC_GROUP, "openssl.ec_group");
-  point_conversion_form_t form;
-  if (lua_isnone(L, 2)) {
-    form = EC_GROUP_get_point_conversion_form(group);
-    openssl_push_point_conversion_form(L, form);
-    lua_pushinteger(L, form);
-    return 2;
-  } else if (lua_isnumber(L, 2))
-    form = luaL_checkint(L, 2);
-  else
-    form = openssl_to_point_conversion_form(L, 2, NULL);
-  EC_GROUP_set_point_conversion_form(group, form);
-  lua_pushvalue(L, 1);
-  return 1;
-}
-
-EC_GROUP *
-openssl_get_ec_group(lua_State *L, int ec_name_idx, int param_enc_idx, int conv_form_idx)
-{
-  int       nid = NID_undef;
-  EC_GROUP *g = NULL;
-  if (lua_isnumber(L, ec_name_idx))
-    nid = lua_tointeger(L, ec_name_idx);
-  else if (lua_isstring(L, ec_name_idx)) {
-    const char *name = luaL_checkstring(L, ec_name_idx);
-    nid = OBJ_txt2nid(name);
-  } else if (lua_isuserdata(L, ec_name_idx)) {
-    if (auxiliar_getclassudata(L, "openssl.evp_pkey", ec_name_idx)) {
-      EVP_PKEY *pkey = CHECK_OBJECT(1, EVP_PKEY, "openssl.evp_pkey");
-      EC_KEY   *ec_key = EVP_PKEY_get1_EC_KEY(pkey);
-      if (ec_key) {
-        g = (EC_GROUP *)EC_KEY_get0_group(ec_key);
-        EC_KEY_free(ec_key);
-      }
-    } else if (auxiliar_getclassudata(L, "openssl.ec_key", ec_name_idx)) {
-      EC_KEY *ec_key = CHECK_OBJECT(1, EC_KEY, "openssl.ec_key");
-      g = (EC_GROUP *)EC_KEY_get0_group(ec_key);
+    const char *curve_name = OBJ_nid2sn(nid);
+    if (curve_name == NULL) {
+      goto cleanup;
     }
-    if (g) g = EC_GROUP_dup(g);
-  }
 
-  if (g == NULL && nid != NID_undef) g = EC_GROUP_new_by_curve_name(nid);
+    if (d == NULL && (x == NULL || y == NULL)) {
+      goto cleanup;
+    }
 
-  if (g) {
-    if (param_enc_idx) {
-      int form = 0;
-      int type = lua_type(L, param_enc_idx);
-      if (type == LUA_TSTRING) {
-        form = openssl_to_point_conversion_form(L, param_enc_idx, NULL);
-        EC_GROUP_set_point_conversion_form(g, form);
-      } else if (type == LUA_TNUMBER) {
-        form = luaL_checkint(L, param_enc_idx);
-        EC_GROUP_set_point_conversion_form(g, form);
-      } else if (lua_isnoneornil(L, param_enc_idx)) {
-        EC_GROUP_set_point_conversion_form(g, POINT_CONVERSION_UNCOMPRESSED);
-      } else
-        luaL_argerror(L, param_enc_idx, "not accept type of point_conversion_form");
-    } else
-      EC_GROUP_set_point_conversion_form(g, POINT_CONVERSION_UNCOMPRESSED);
+    if (!OSSL_PARAM_BLD_push_utf8_string(param_bld, OSSL_PKEY_PARAM_GROUP_NAME, curve_name, 0)) {
+      goto cleanup;
+    }
 
-    if (conv_form_idx) {
-      int asn1_flag = 0;
-      int type = lua_type(L, conv_form_idx);
-      if (type == LUA_TSTRING) {
-        asn1_flag = openssl_to_group_asn1_flag(L, conv_form_idx, NULL);
-        EC_GROUP_set_asn1_flag(g, asn1_flag);
-      } else if (type == LUA_TNUMBER) {
-        asn1_flag = luaL_checkint(L, conv_form_idx);
-        EC_GROUP_set_asn1_flag(g, asn1_flag);
-      } else if (lua_isnoneornil(L, conv_form_idx)) {
-        EC_GROUP_set_asn1_flag(g, OPENSSL_EC_NAMED_CURVE);
-      } else
-        luaL_argerror(L, conv_form_idx, "not accept type of asn1 flag");
-    } else
-      EC_GROUP_set_asn1_flag(g, OPENSSL_EC_NAMED_CURVE);
-  }
-
-  return g;
-}
-
-static int
-openssl_ec_group_point_new(lua_State *L)
-{
-  EC_GROUP *group = CHECK_OBJECT(1, EC_GROUP, "openssl.ec_group");
-  EC_POINT *point = EC_POINT_new(group);
-  PUSH_OBJECT(point, "openssl.ec_point");
-  return 1;
-}
-
-static int
-openssl_ec_point_dup(lua_State *L)
-{
-  const EC_GROUP *group = CHECK_OBJECT(1, EC_GROUP, "openssl.ec_group");
-  const EC_POINT *point = CHECK_OBJECT(2, EC_POINT, "openssl.ec_point");
-
-  EC_POINT *new = EC_POINT_dup(point, group);
-  PUSH_OBJECT(new, "openssl.ec_point");
-  return 1;
-}
-
-static int
-openssl_ec_point_equal(lua_State *L)
-{
-  const EC_GROUP *group = CHECK_OBJECT(1, EC_GROUP, "openssl.ec_group");
-  const EC_POINT *a = CHECK_OBJECT(2, EC_POINT, "openssl.ec_point");
-  const EC_POINT *b = CHECK_OBJECT(3, EC_POINT, "openssl.ec_point");
-
-  int ret = EC_POINT_cmp(group, a, b, NULL) == 0;
-  lua_pushboolean(L, ret);
-  return 1;
-}
-
-static int
-openssl_ec_point_oct2point(lua_State *L)
-{
-  const EC_GROUP      *group = CHECK_OBJECT(1, EC_GROUP, "openssl.ec_group");
-  size_t               size = 0;
-  const unsigned char *oct = (const unsigned char *)luaL_checklstring(L, 2, &size);
-  EC_POINT            *point = EC_POINT_new(group);
-
-  int ret = EC_POINT_oct2point(group, point, oct, size, NULL);
-  if (ret == 1)
-    PUSH_OBJECT(point, "openssl.ec_point");
-  else
-    ret = openssl_pushresult(L, ret);
-  return ret;
-}
-
-static int
-openssl_ec_point_point2oct(lua_State *L)
-{
-  const EC_GROUP         *group = CHECK_OBJECT(1, EC_GROUP, "openssl.ec_group");
-  const EC_POINT         *point = CHECK_OBJECT(2, EC_POINT, "openssl.ec_point");
-  point_conversion_form_t form = lua_isnone(L, 3)
-                                   ? EC_GROUP_get_point_conversion_form(group)
-                                   : openssl_to_point_conversion_form(L, 3, "uncompressed");
-  size_t                  size = EC_POINT_point2oct(group, point, form, NULL, 0, NULL);
-  if (size > 0) {
-    unsigned char *oct = (unsigned char *)OPENSSL_malloc(size);
-    size = EC_POINT_point2oct(group, point, form, oct, size, NULL);
-    if (size > 0)
-      lua_pushlstring(L, (const char *)oct, size);
+    if (form == POINT_CONVERSION_COMPRESSED)
+      point_form = "compressed";
+    else if (form == POINT_CONVERSION_UNCOMPRESSED)
+      point_form = "uncompressed";
+    else if (form == POINT_CONVERSION_HYBRID)
+      point_form = "hybrid";
     else
-      lua_pushnil(L);
-    OPENSSL_free(oct);
-    return 1;
-  }
-  return 0;
-}
+      goto cleanup;
 
-static int
-openssl_ec_point_bn2point(lua_State *L)
-{
-  const EC_GROUP *group = CHECK_OBJECT(1, EC_GROUP, "openssl.ec_group");
-  BIGNUM         *bn = CHECK_OBJECT(2, BIGNUM, "openssl.bn");
-  EC_POINT       *pnt = EC_POINT_bn2point(group, bn, NULL, NULL);
-  if (pnt)
-    PUSH_OBJECT(pnt, "openssl.ec_point");
-  else
-    lua_pushnil(L);
-  return 1;
-}
+    if (!OSSL_PARAM_BLD_push_utf8_string(param_bld,
+                                         OSSL_PKEY_PARAM_EC_POINT_CONVERSION_FORMAT,
+                                         point_form, 0))
+      goto cleanup;
 
-static int
-openssl_ec_point_point2bn(lua_State *L)
-{
-  const EC_GROUP         *group = CHECK_OBJECT(1, EC_GROUP, "openssl.ec_group");
-  const EC_POINT         *point = CHECK_OBJECT(2, EC_POINT, "openssl.ec_point");
-  point_conversion_form_t form = lua_isnone(L, 3)
-                                   ? EC_GROUP_get_point_conversion_form(group)
-                                   : openssl_to_point_conversion_form(L, 3, "uncompressed");
-  BIGNUM                 *bn = EC_POINT_point2bn(group, point, form, NULL, NULL);
-  if (bn)
-    PUSH_OBJECT(bn, "openssl.bn");
-  else
-    lua_pushnil(L);
-  return 1;
-}
+    if (flags == OPENSSL_EC_NAMED_CURVE)
+      asn1_encoding = "named_curve";
+    else if (flags == OPENSSL_EC_EXPLICIT_CURVE)
+      asn1_encoding = "explicit";
+    else
+      goto cleanup;
+    if (!OSSL_PARAM_BLD_push_utf8_string(param_bld,
+                                         OSSL_PKEY_PARAM_EC_ENCODING,
+                                         asn1_encoding, 0))
+      goto cleanup;
 
-static int
-openssl_ec_point_hex2point(lua_State *L)
-{
-  const EC_GROUP *group = CHECK_OBJECT(1, EC_GROUP, "openssl.ec_group");
-  const char     *hex = luaL_checkstring(L, 2);
+    if (x && y)
+    {
+      size_t degree = EC_GROUP_get_degree(group);
+      size_t field_len = (degree + 7) / 8;
+      size_t point_len = 0;
 
-  EC_POINT *pnt = EC_POINT_hex2point(group, hex, NULL, NULL);
-  if (pnt)
-    PUSH_OBJECT(pnt, "openssl.ec_point");
-  else
-    lua_pushnil(L);
-  return 1;
-}
+      switch(form) {
+        case POINT_CONVERSION_COMPRESSED:
+          point_len = 1 + field_len;
+          point_buf = malloc(point_len);
+          if (point_buf) {
+            point_buf[0] = 0x02 + (BN_is_odd(y) ? 1 : 0);
+            BN_bn2binpad(x, point_buf + 1, field_len);
+          }
+          break;
 
-static int
-openssl_ec_point_point2hex(lua_State *L)
-{
-  const EC_GROUP         *group = CHECK_OBJECT(1, EC_GROUP, "openssl.ec_group");
-  const EC_POINT         *point = CHECK_OBJECT(2, EC_POINT, "openssl.ec_point");
-  point_conversion_form_t form = lua_isnone(L, 3)
-                                   ? EC_GROUP_get_point_conversion_form(group)
-                                   : openssl_to_point_conversion_form(L, 3, "uncompressed");
-  char                   *hex = EC_POINT_point2hex(group, point, form, NULL);
-  if (hex) {
-    lua_pushstring(L, hex);
-    OPENSSL_free(hex);
-  } else
-    lua_pushnil(L);
-  return 1;
-}
+        case POINT_CONVERSION_UNCOMPRESSED:
+          point_len = 1 + 2 * field_len;
+          point_buf = malloc(point_len);
+          if (point_buf) {
+            point_buf[0] = 0x04;
+            BN_bn2binpad(x, point_buf + 1, field_len);
+            BN_bn2binpad(y, point_buf + 1 + field_len, field_len);
+          }
+          break;
 
-static int
-openssl_ec_group_generate_key(lua_State *L)
-{
-  const EC_GROUP *group = CHECK_OBJECT(1, EC_GROUP, "openssl.ec_group");
+        case POINT_CONVERSION_HYBRID:
+          point_len = 1 + 2 * field_len;
+          point_buf = malloc(point_len);
+          if (point_buf) {
+            point_buf[0] = 0x06 + (BN_is_odd(y) ? 1 : 0);
+            BN_bn2binpad(x, point_buf + 1, field_len);
+            BN_bn2binpad(y, point_buf + 1 + field_len, field_len);
+          }
+          break;
 
-  EC_KEY *ec = EC_KEY_new();
-  if (ec) {
-    int ret;
-    EC_KEY_set_group(ec, group);
-    ret = EC_KEY_generate_key(ec);
-    if (ret == 1) {
-      PUSH_OBJECT(ec, "openssl.ec_key");
-      return 1;
+        default:
+          break;
+      }
+
+      if (!point_buf || !OSSL_PARAM_BLD_push_octet_string(param_bld,
+                                         OSSL_PKEY_PARAM_PUB_KEY,
+                                         point_buf, point_len)) {
+        goto cleanup;
+      }
     }
-    EC_KEY_free(ec);
-    return openssl_pushresult(L, ret);
+
+    if (d && !OSSL_PARAM_BLD_push_BN(param_bld, OSSL_PKEY_PARAM_PRIV_KEY, d)) {
+      goto cleanup;
+    }
+
+    params = OSSL_PARAM_BLD_to_param(param_bld);
+    if (!params) goto cleanup;
+
+    ctx = EVP_PKEY_CTX_new_from_name(NULL,
+                                     nid == NID_sm2 ? "SM2" : "EC",
+                                     NULL);
+    if (!ctx) goto cleanup;
+
+    if (EVP_PKEY_fromdata_init(ctx) <= 0) goto cleanup;
+
+    int selection = (d != NULL) ? EVP_PKEY_KEYPAIR : EVP_PKEY_PUBLIC_KEY;
+    if (EVP_PKEY_fromdata(ctx, &pkey, selection, params) <= 0) {
+      pkey = NULL;
+    }
+
+  cleanup:
+    OSSL_PARAM_free(params);
+    OSSL_PARAM_BLD_free(param_bld);
+    EVP_PKEY_CTX_free(ctx);
+    free(point_buf);
   }
-  return 0;
+  return pkey;
 }
+#endif
 
-static int
-openssl_ec_group_equal(lua_State *L)
+/* Suppress deprecation warnings for EC_KEY accessor functions that are part of the module's API.
+ * The core cryptographic operations (ECDSA sign/verify, ECDH) have been migrated to EVP APIs.
+ * These accessors are needed for the Lua API and object lifecycle management. */
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+
+#include "ec_util.c"
+/* Include EC_GROUP and EC_POINT modules */
+#include "group.c"
+#include "point.c"
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+
+/* Helper function to convert EC_KEY to EVP_PKEY for cryptographic operations (OpenSSL 3.0+) */
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L && !defined(LIBRESSL_VERSION_NUMBER)
+static EVP_PKEY*
+ec_key_to_evp_pkey(EC_KEY *ec)
 {
-  const EC_GROUP *a = CHECK_OBJECT(1, EC_GROUP, "openssl.ec_group");
-  const EC_GROUP *b = CHECK_OBJECT(2, EC_GROUP, "openssl.ec_group");
-  lua_pushboolean(L, EC_GROUP_cmp(a, b, NULL) == 0);
-  return 1;
+  EVP_PKEY *pkey = EVP_PKEY_new();
+  if (pkey == NULL)
+    return NULL;
+
+  /* Suppress deprecation warning for EVP_PKEY_set1_EC_KEY (deprecated in OpenSSL 3.0).
+   * This function is necessary for compatibility with EC_KEY-based operations. */
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+  if (EVP_PKEY_set1_EC_KEY(pkey, ec) != 1) {
+    EVP_PKEY_free(pkey);
+    return NULL;
+  }
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+
+  return pkey;
 }
-
-static luaL_Reg ec_group_funs[] = {
-  { "__tostring",            auxiliar_tostring                      },
-  { "__gc",                  openssl_ec_group_free                  },
-  { "__eq",                  openssl_ec_group_equal                 },
-  { "equal",                 openssl_ec_group_equal                 },
-
-  { "affine_coordinates",    openssl_ecpoint_affine_coordinates     },
-  { "parse",                 openssl_ec_group_parse                 },
-  { "asn1_flag",             openssl_ec_group_asn1_flag             },
-
-  { "point_conversion_form", openssl_ec_group_point_conversion_form },
-  { "point_new",             openssl_ec_group_point_new             },
-  { "point_dup",             openssl_ec_point_dup                   },
-  { "point_equal",           openssl_ec_point_equal                 },
-  { "point2oct",             openssl_ec_point_point2oct             },
-  { "oct2point",             openssl_ec_point_oct2point             },
-  { "point2bn",              openssl_ec_point_point2bn              },
-  { "bn2point",              openssl_ec_point_bn2point              },
-  { "point2hex",             openssl_ec_point_point2hex             },
-  { "hex2point",             openssl_ec_point_hex2point             },
-
-  { "generate_key",          openssl_ec_group_generate_key          },
-
-  { NULL,                    NULL                                   }
-};
+#endif
 
 static int
 openssl_ecdsa_do_sign(lua_State *L)
+/***
+sign pre-hashed data with EC key using low-level ECDSA
+
+@function do_sign
+@tparam openssl.ec_key ec the EC key to sign with
+@tparam string data pre-hashed data to sign
+@tparam[opt=true] boolean der true returns DER-encoded signature, false returns r and s components
+@treturn string DER-encoded signature when der is true
+@treturn[2] openssl.bn r r component when der is false
+@treturn[2] openssl.bn s s component when der is false
+@treturn[3] nil on error
+@treturn[3] string error message
+*/
+
 {
-  EC_KEY     *ec = CHECK_OBJECT(1, EC_KEY, "openssl.ec_key");
-  size_t      l;
-  const char *sdata = luaL_checklstring(L, 2, &l);
-  ECDSA_SIG  *sig = ECDSA_do_sign((const unsigned char *)sdata, l, ec);
-  int         der = lua_isnone(L, 3) ? 1 : lua_toboolean(L, 3);
-  int         ret = 0;
+  EC_KEY              *ec = CHECK_OBJECT(1, EC_KEY, "openssl.ec_key");
+  size_t               l;
+  const unsigned char *sdata = (const unsigned char *)luaL_checklstring(L, 2, &l);
+  int                  der = lua_isnone(L, 3) ? 1 : lua_toboolean(L, 3);
+  int                  ret = 0;
+
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L && !defined(LIBRESSL_VERSION_NUMBER)
+  /* OpenSSL 3.0+: Use EVP API */
+  EVP_PKEY            *pkey = NULL;
+  EVP_MD_CTX          *ctx = NULL;
+  unsigned char       *sigbuf = NULL;
+  size_t               siglen = 0;
+
+  pkey = ec_key_to_evp_pkey(ec);
+  if (pkey == NULL)
+    return openssl_pushresult(L, 0);
+
+  ctx = EVP_MD_CTX_new();
+  if (ctx == NULL) {
+    EVP_PKEY_free(pkey);
+    return openssl_pushresult(L, 0);
+  }
+
+  /* Initialize with NULL digest to sign pre-hashed data */
+  ret = EVP_DigestSignInit(ctx, NULL, NULL, NULL, pkey);
+  if (ret == 1) {
+    /* Get signature length */
+    ret = EVP_DigestSign(ctx, NULL, &siglen, sdata, l);
+    if (ret == 1) {
+      sigbuf = OPENSSL_malloc(siglen);
+      if (sigbuf) {
+        ret = EVP_DigestSign(ctx, sigbuf, &siglen, sdata, l);
+        if (ret == 1) {
+          if (der) {
+            /* Return DER-encoded signature */
+            lua_pushlstring(L, (const char *)sigbuf, siglen);
+            ret = 1;
+          } else {
+            /* Parse DER signature and return r, s components */
+            const unsigned char *p = sigbuf;
+            ECDSA_SIG           *sig = d2i_ECDSA_SIG(NULL, &p, siglen);
+            if (sig) {
+              const BIGNUM *r = NULL, *s = NULL;
+              ECDSA_SIG_get0(sig, &r, &s);
+
+              r = BN_dup(r);
+              s = BN_dup(s);
+
+              PUSH_OBJECT(r, "openssl.bn");
+              PUSH_OBJECT(s, "openssl.bn");
+              ret = 2;
+              ECDSA_SIG_free(sig);
+            } else {
+              ret = 0;
+            }
+          }
+        }
+        OPENSSL_free(sigbuf);
+      } else {
+        ret = 0;
+      }
+    }
+  }
+
+  EVP_MD_CTX_free(ctx);
+  EVP_PKEY_free(pkey);
+
+  return ret > 0 ? ret : openssl_pushresult(L, 0);
+#else
+  /* OpenSSL 1.1 and LibreSSL: Use legacy API */
+  ECDSA_SIG *sig = ECDSA_do_sign(sdata, l, ec);
 
   if (der) {
     unsigned char *p = NULL;
@@ -483,54 +299,183 @@ openssl_ecdsa_do_sign(lua_State *L)
   }
   ECDSA_SIG_free(sig);
   return ret;
+#endif
 }
 
 static int
 openssl_ecdsa_do_verify(lua_State *L)
+/***
+verify a low-level ECDSA signature over pre-hashed data
+
+@function do_verify
+@tparam openssl.ec_key ec the EC key to verify with
+@tparam string digest pre-hashed data that was signed
+@tparam string|openssl.bn signature DER-encoded signature string, or r component
+@tparam[opt] openssl.bn s s component when signature is given as (r, s) pair
+@treturn boolean true if the signature is valid, false otherwise
+@treturn[2] nil on error
+@treturn[2] string error message
+*/
+
 {
-  size_t      l, sigl;
-  int         ret;
-  EC_KEY     *ec = CHECK_OBJECT(1, EC_KEY, "openssl.ec_key");
-  const char *dgst = luaL_checklstring(L, 2, &l);
-  int         top = lua_gettop(L);
+  size_t               l, sigl;
+  int                  ret;
+  EC_KEY              *ec = CHECK_OBJECT(1, EC_KEY, "openssl.ec_key");
+  const unsigned char *dgst = (const unsigned char *)luaL_checklstring(L, 2, &l);
+  int                  top = lua_gettop(L);
+
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L && !defined(LIBRESSL_VERSION_NUMBER)
+  /* OpenSSL 3.0+: Use EVP API */
+  EVP_PKEY            *pkey = NULL;
+  EVP_MD_CTX          *ctx = NULL;
+  unsigned char       *sigbuf = NULL;
+  size_t               siglen = 0;
+
+  pkey = ec_key_to_evp_pkey(ec);
+  if (pkey == NULL)
+    return openssl_pushresult(L, 0);
+
+  ctx = EVP_MD_CTX_new();
+  if (ctx == NULL) {
+    EVP_PKEY_free(pkey);
+    return openssl_pushresult(L, 0);
+  }
+
+  /* Convert signature to DER format if needed */
   if (top == 3) {
-    const char *s = luaL_checklstring(L, 3, &sigl);
-    ECDSA_SIG  *sig = d2i_ECDSA_SIG(NULL, (const unsigned char **)&s, sigl);
-    ret = ECDSA_do_verify((const unsigned char *)dgst, l, sig, ec);
+    /* Signature is already in DER format */
+    const unsigned char *s = (const unsigned char *)luaL_checklstring(L, 3, &sigl);
+    sigbuf = OPENSSL_malloc(sigl);
+    if (sigbuf == NULL) {
+      EVP_MD_CTX_free(ctx);
+      EVP_PKEY_free(pkey);
+      return openssl_pushresult(L, 0);
+    }
+    memcpy(sigbuf, s, sigl);
+    siglen = sigl;
+  } else {
+    /* Signature is provided as r, s components */
+    BIGNUM    *r = BN_get(L, 3);
+    BIGNUM    *s = BN_get(L, 4);
+    ECDSA_SIG *sig = ECDSA_SIG_new();
+    ECDSA_SIG_set0(sig, r, s);
+
+    /* Convert to DER */
+    unsigned char *p = NULL;
+    int            derlen = i2d_ECDSA_SIG(sig, &p);
+    if (derlen > 0) {
+      sigbuf = p;
+      siglen = derlen;
+    }
+    ECDSA_SIG_free(sig);
+
+    if (derlen <= 0) {
+      EVP_MD_CTX_free(ctx);
+      EVP_PKEY_free(pkey);
+      return openssl_pushresult(L, 0);
+    }
+  }
+
+  /* Initialize with NULL digest to verify pre-hashed data */
+  ret = EVP_DigestVerifyInit(ctx, NULL, NULL, NULL, pkey);
+  if (ret == 1) {
+    ret = EVP_DigestVerify(ctx, sigbuf, siglen, dgst, l);
+  }
+
+  OPENSSL_free(sigbuf);
+  EVP_MD_CTX_free(ctx);
+  EVP_PKEY_free(pkey);
+
+  if (ret == -1)
+    return openssl_pushresult(L, ret);
+
+  lua_pushboolean(L, ret == 1);
+  return 1;
+#else
+  /* OpenSSL 1.1 and LibreSSL: Use legacy API */
+  if (top == 3) {
+    const unsigned char *s = (const unsigned char *)luaL_checklstring(L, 3, &sigl);
+    ECDSA_SIG  *sig = d2i_ECDSA_SIG(NULL, &s, sigl);
+    ret = ECDSA_do_verify(dgst, l, sig, ec);
     ECDSA_SIG_free(sig);
   } else {
     BIGNUM    *r = BN_get(L, 3);
     BIGNUM    *s = BN_get(L, 4);
     ECDSA_SIG *sig = ECDSA_SIG_new();
     ECDSA_SIG_set0(sig, r, s);
-    ret = ECDSA_do_verify((const unsigned char *)dgst, l, sig, ec);
+    ret = ECDSA_do_verify(dgst, l, sig, ec);
     ECDSA_SIG_free(sig);
   }
   if (ret == -1) return openssl_pushresult(L, ret);
   lua_pushboolean(L, ret);
   return 1;
+#endif
 }
 
 /***
 do EC sign
 
 @function sign
-@tparam ec_key eckey
+@tparam openssl.ec_key eckey
 @tparam string digest result of digest to be signed
 @tparam evp_md|string|nid md digest alg identity, default is sm3
 @treturn string signature
 */
-static LUA_FUNCTION(openssl_ecdsa_sign)
+static int openssl_ecdsa_sign(lua_State *L)
 {
   int                  ret;
   EC_KEY              *eckey = CHECK_OBJECT(1, EC_KEY, "openssl.ec_key");
   size_t               dgstlen = 0;
   const unsigned char *dgst = (const unsigned char *)luaL_checklstring(L, 2, &dgstlen);
   const EVP_MD        *md = get_digest(L, 3, NULL);
+
+  luaL_argcheck(L, dgstlen == (size_t)EVP_MD_size(md), 4, "invalid digest");
+
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L && !defined(LIBRESSL_VERSION_NUMBER)
+  /* OpenSSL 3.0+: Use EVP API */
+  EVP_PKEY            *pkey = NULL;
+  EVP_MD_CTX          *ctx = NULL;
+  unsigned char       *sig = NULL;
+  size_t               siglen = 0;
+
+  pkey = ec_key_to_evp_pkey(eckey);
+  if (pkey == NULL)
+    return openssl_pushresult(L, 0);
+
+  ctx = EVP_MD_CTX_new();
+  if (ctx == NULL) {
+    EVP_PKEY_free(pkey);
+    return openssl_pushresult(L, 0);
+  }
+
+  /* Initialize with NULL digest to sign pre-hashed data */
+  ret = EVP_DigestSignInit(ctx, NULL, NULL, NULL, pkey);
+  if (ret == 1) {
+    /* Get signature length */
+    ret = EVP_DigestSign(ctx, NULL, &siglen, dgst, dgstlen);
+    if (ret == 1) {
+      sig = OPENSSL_malloc(siglen);
+      if (sig) {
+        ret = EVP_DigestSign(ctx, sig, &siglen, dgst, dgstlen);
+        if (ret == 1) {
+          lua_pushlstring(L, (const char *)sig, siglen);
+        }
+        OPENSSL_free(sig);
+      } else {
+        ret = 0;
+      }
+    }
+  }
+
+  EVP_MD_CTX_free(ctx);
+  EVP_PKEY_free(pkey);
+
+  return ret == 1 ? 1 : openssl_pushresult(L, ret);
+#else
+  /* OpenSSL 1.1 and LibreSSL: Use legacy API */
   unsigned int         siglen = ECDSA_size(eckey);
   unsigned char       *sig = OPENSSL_malloc(siglen);
 
-  luaL_argcheck(L, dgstlen == EVP_MD_size(md), 4, "invalid digest");
   ret = ECDSA_sign(EVP_MD_type(md), dgst, dgstlen, sig, &siglen, eckey);
   if (ret == 1) {
     lua_pushlstring(L, (const char *)sig, siglen);
@@ -538,20 +483,22 @@ static LUA_FUNCTION(openssl_ecdsa_sign)
     ret = openssl_pushresult(L, ret);
   OPENSSL_free(sig);
   return ret;
+#endif
 }
 
 /***
 do EC verify, input msg is digest result
 
 @function verify
-@tparam ec_key eckey
+@tparam openssl.ec_key eckey
 @tparam string digest result of digest to be signed
 @tparam string signature
 @tparam evp_md|string|nid md digest alg identity
 @treturn boolean true for verified, false for invalid signature
-@return nil for error, and followed by error message
+@treturn[2] nil on error
+@treturn[2] string error message
 */
-static LUA_FUNCTION(openssl_ecdsa_verify)
+static int openssl_ecdsa_verify(lua_State *L)
 {
   int                  ret;
   EC_KEY              *eckey = CHECK_OBJECT(1, EC_KEY, "openssl.ec_key");
@@ -560,54 +507,96 @@ static LUA_FUNCTION(openssl_ecdsa_verify)
   size_t               siglen = 0;
   const unsigned char *sig = (const unsigned char *)luaL_checklstring(L, 3, &siglen);
   const EVP_MD        *md = get_digest(L, 4, NULL);
-  int                  type = EVP_MD_type(md);
 
-  luaL_argcheck(L, dgstlen == EVP_MD_size(md), 4, "invalid digest");
+  luaL_argcheck(L, dgstlen == (size_t)EVP_MD_size(md), 4, "invalid digest");
+
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L && !defined(LIBRESSL_VERSION_NUMBER)
+  /* OpenSSL 3.0+: Use EVP API */
+  EVP_PKEY            *pkey = NULL;
+  EVP_MD_CTX          *ctx = NULL;
+
+  pkey = ec_key_to_evp_pkey(eckey);
+  if (pkey == NULL)
+    return openssl_pushresult(L, 0);
+
+  ctx = EVP_MD_CTX_new();
+  if (ctx == NULL) {
+    EVP_PKEY_free(pkey);
+    return openssl_pushresult(L, 0);
+  }
+
+  /* Initialize with NULL digest to verify pre-hashed data */
+  ret = EVP_DigestVerifyInit(ctx, NULL, NULL, NULL, pkey);
+  if (ret == 1) {
+    ret = EVP_DigestVerify(ctx, sig, siglen, dgst, dgstlen);
+  }
+
+  EVP_MD_CTX_free(ctx);
+  EVP_PKEY_free(pkey);
+
+  if (ret == -1)
+    return openssl_pushresult(L, ret);
+
+  lua_pushboolean(L, ret == 1);
+  return 1;
+#else
+  /* OpenSSL 1.1 and LibreSSL: Use legacy API */
+  int type = EVP_MD_type(md);
+
   ret = ECDSA_verify(type, dgst, (int)dgstlen, sig, (int)siglen, eckey);
   if (ret == -1) return openssl_pushresult(L, ret);
   lua_pushboolean(L, ret);
   return 1;
-}
-
-/* ec_point */
-static int
-openssl_ec_point_copy(lua_State *L)
-{
-  EC_POINT *self = CHECK_OBJECT(1, EC_POINT, "openssl.ec_point");
-  EC_POINT *from = CHECK_OBJECT(2, EC_POINT, "openssl.ec_point");
-  int       ret = EC_POINT_copy(self, from);
-  return openssl_pushresult(L, ret);
+#endif
 }
 
 static int
-openssl_ec_point_free(lua_State *L)
-{
-  EC_POINT *p = CHECK_OBJECT(1, EC_POINT, "openssl.ec_point");
-  EC_POINT_free(p);
-  return 0;
-}
-
-static int
-openssl_ec_key_free(lua_State *L)
+openssl_key_free(lua_State *L)
 {
   EC_KEY *p = CHECK_OBJECT(1, EC_KEY, "openssl.ec_key");
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
   EC_KEY_free(p);
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
   return 0;
 }
 
+/***
+parse EC key components and parameters
+@function parse
+@tparam[opt=false] boolean basic true for basic information only
+@treturn table EC key information including encoding flags, conversion form, group, and key components
+*/
 static int
-openssl_ec_key_parse(lua_State *L)
+openssl_key_parse(lua_State *L)
 {
   EC_KEY         *ec = CHECK_OBJECT(1, EC_KEY, "openssl.ec_key");
   int             basic = luaL_opt(L, lua_toboolean, 2, 0);
-  const EC_POINT *point = EC_KEY_get0_public_key(ec);
-  const EC_GROUP *group = EC_KEY_get0_group(ec);
-  const BIGNUM   *priv = EC_KEY_get0_private_key(ec);
+  const EC_POINT *point;
+  const EC_GROUP *group;
+  const BIGNUM   *priv;
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+
+  point = EC_KEY_get0_public_key(ec);
+  group = EC_KEY_get0_group(ec);
+  priv = EC_KEY_get0_private_key(ec);
   lua_newtable(L);
 
   AUXILIAR_SET(L, -1, "enc_flag", EC_KEY_get_enc_flags(ec), integer);
   AUXILIAR_SET(L, -1, "conv_form", EC_KEY_get_conv_form(ec), integer);
   AUXILIAR_SET(L, -1, "curve_name", EC_GROUP_get_curve_name(group), integer);
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
   if (basic) {
     BIGNUM *x = BN_new();
@@ -633,38 +622,104 @@ openssl_ec_key_parse(lua_State *L)
   return 1;
 };
 
-#ifndef OPENSSL_NO_ECDH
+#define MAX_ECDH_SIZE 256
+
+#if OPENSSL_VERSION_NUMBER < 0x30000000L || defined(LIBRESSL_VERSION_NUMBER)
+/* KDF1_SHA1 for legacy ECDH implementation (OpenSSL < 3.0 and LibreSSL) */
+#ifndef OPENSSL_NO_SHA
 static const int KDF1_SHA1_len = 20;
 static void *
 KDF1_SHA1(const void *in, size_t inlen, void *out, size_t *outlen)
 {
-#ifndef OPENSSL_NO_SHA
   if (*outlen < SHA_DIGEST_LENGTH)
     return NULL;
   else
     *outlen = SHA_DIGEST_LENGTH;
   return SHA1(in, inlen, out);
-#else
-  return NULL;
-#endif /* OPENSSL_NO_SHA */
 }
-#endif /* OPENSSL_NO_ECDH */
+#endif
+#endif
 
-#define MAX_ECDH_SIZE 256
-
+/***
+compute ECDH shared key
+@function compute_key
+@tparam openssl.ec_key peer peer EC key for key exchange
+@tparam[opt] function kdf key derivation function
+@treturn string shared secret or nil if failed
+*/
 static int
 openssl_ecdh_compute_key(lua_State *L)
 {
-  EC_KEY *ec = CHECK_OBJECT(1, EC_KEY, "openssl.ec_key");
-  EC_KEY *peer = CHECK_OBJECT(2, EC_KEY, "openssl.ec_key");
+  EC_KEY        *ec = CHECK_OBJECT(1, EC_KEY, "openssl.ec_key");
+  EC_KEY        *peer = CHECK_OBJECT(2, EC_KEY, "openssl.ec_key");
 
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L && !defined(LIBRESSL_VERSION_NUMBER)
+  /* OpenSSL 3.0+: Use EVP API */
+  EVP_PKEY      *pkey = NULL;
+  EVP_PKEY      *peerkey = NULL;
+  EVP_PKEY_CTX  *ctx = NULL;
+  unsigned char *secret = NULL;
+  size_t         secretlen = 0;
+  int            ret = 0;
+
+  pkey = ec_key_to_evp_pkey(ec);
+  if (pkey == NULL)
+    return openssl_pushresult(L, 0);
+
+  peerkey = ec_key_to_evp_pkey(peer);
+  if (peerkey == NULL) {
+    EVP_PKEY_free(pkey);
+    return openssl_pushresult(L, 0);
+  }
+
+  ctx = EVP_PKEY_CTX_new(pkey, NULL);
+  if (ctx == NULL) {
+    EVP_PKEY_free(pkey);
+    EVP_PKEY_free(peerkey);
+    return openssl_pushresult(L, 0);
+  }
+
+  ret = EVP_PKEY_derive_init(ctx);
+  if (ret == 1) {
+    ret = EVP_PKEY_derive_set_peer(ctx, peerkey);
+    if (ret == 1) {
+      /* Get the length of the shared secret */
+      ret = EVP_PKEY_derive(ctx, NULL, &secretlen);
+      if (ret == 1) {
+        secret = OPENSSL_malloc(secretlen);
+        if (secret) {
+          ret = EVP_PKEY_derive(ctx, secret, &secretlen);
+          if (ret == 1) {
+            lua_pushlstring(L, (const char *)secret, secretlen);
+          }
+          OPENSSL_free(secret);
+        } else {
+          ret = 0;
+        }
+      }
+    }
+  }
+
+  EVP_PKEY_CTX_free(ctx);
+  EVP_PKEY_free(peerkey);
+  EVP_PKEY_free(pkey);
+
+  return ret == 1 ? 1 : openssl_pushresult(L, ret);
+#else
+  /* OpenSSL 1.1 and LibreSSL: Use legacy API */
   int           field_size, outlen, secret_size_a;
   unsigned char secret_a[MAX_ECDH_SIZE];
   void *(*kdf)(const void *in, size_t inlen, void *out, size_t *xoutlen);
+
   field_size = EC_GROUP_get_degree(EC_KEY_get0_group(ec));
   if (field_size <= 24 * 8) {
+#ifndef OPENSSL_NO_SHA
     outlen = KDF1_SHA1_len;
     kdf = KDF1_SHA1;
+#else
+    outlen = (field_size + 7) / 8;
+    kdf = NULL;
+#endif
   } else {
     outlen = (field_size + 7) / 8;
     kdf = NULL;
@@ -672,8 +727,15 @@ openssl_ecdh_compute_key(lua_State *L)
   secret_size_a = ECDH_compute_key(secret_a, outlen, EC_KEY_get0_public_key(peer), ec, kdf);
   lua_pushlstring(L, (const char *)secret_a, secret_size_a);
   return 1;
+#endif
 }
 
+/***
+set ECDSA signing method for EC key
+@function set_method
+@tparam openssl.engine engine engine providing the ECDSA method
+@treturn boolean result true for success
+*/
 static int
 openssl_ecdsa_set_method(lua_State *L)
 {
@@ -687,30 +749,71 @@ openssl_ecdsa_set_method(lua_State *L)
     return openssl_pushresult(L, r);
   }
 #else
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+
   const EC_KEY_METHOD *m = ENGINE_get_EC(e);
   if (m) {
     int r = EC_KEY_set_method(ec, m);
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+
     return openssl_pushresult(L, r);
   }
+
+
 #endif
 #endif
   return 0;
 }
 
+/***
+check if EC key is valid
+@function check
+@treturn boolean true if key is valid, false otherwise
+*/
 static int
-openssl_ec_key_check_key(lua_State *L)
+openssl_key_check_key(lua_State *L)
 {
   EC_KEY *ec = CHECK_OBJECT(1, EC_KEY, "openssl.ec_key");
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
   lua_pushboolean(L, EC_KEY_check_key(ec));
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
   return 1;
 }
 
+/***
+export EC key to DER format
+@function export
+@treturn string DER encoded EC private key
+*/
 static int
-openssl_ec_key_export(lua_State *L)
+openssl_key_export(lua_State *L)
 {
   EC_KEY        *ec = CHECK_OBJECT(1, EC_KEY, "openssl.ec_key");
   unsigned char *der = NULL;
-  int            len = i2d_ECPrivateKey(ec, &der);
+  int            len;
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+
+  len = i2d_ECPrivateKey(ec, &der);
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+
   if (len > 0)
     lua_pushlstring(L, (const char *)der, len);
   else
@@ -719,29 +822,66 @@ openssl_ec_key_export(lua_State *L)
   return 1;
 }
 
+/***
+get or set EC group for EC key
+@function group
+@tparam[opt] openssl.ec_group group optional EC group to set
+@treturn openssl.ec_group current EC group when called without parameters
+@treturn boolean true when setting group successfully
+*/
 static int
-openssl_ec_key_group(lua_State *L)
+openssl_key_group(lua_State *L)
 {
   EC_KEY *ec = CHECK_OBJECT(1, EC_KEY, "openssl.ec_key");
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+
   if (!lua_isnone(L, 2)) {
     EC_GROUP *g = CHECK_OBJECT(2, EC_GROUP, "openssl.ec_group");
     int       ret = EC_KEY_set_group(ec, g);
+
     return openssl_pushresult(L, ret);
   } else {
     const EC_GROUP *g = EC_KEY_get0_group(ec);
     g = EC_GROUP_dup(g);
+
     PUSH_OBJECT(g, "openssl.ec_group");
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+
     return 1;
   }
 }
 
+/***
+read EC key from DER encoded data
+@function read
+@tparam string der DER encoded EC private key data
+@treturn openssl.ec_key|nil parsed EC key or nil on failure
+*/
 static int
-openssl_ec_key_read(lua_State *L)
+openssl_key_read(lua_State *L)
 {
   size_t               len = 0;
   const unsigned char *der = (const unsigned char *)luaL_checklstring(L, 1, &len);
+  EC_KEY              *ec;
 
-  EC_KEY *ec = d2i_ECPrivateKey(NULL, &der, len);
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+
+  ec = d2i_ECPrivateKey(NULL, &der, len);
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+
   if (ec)
     PUSH_OBJECT(ec, "openssl.ec_key");
   else
@@ -749,13 +889,32 @@ openssl_ec_key_read(lua_State *L)
   return 1;
 }
 
+/***
+get or set point conversion form for EC key
+@function conv_form
+@tparam[opt] string|number form point conversion form to set
+@treturn[1] string point conversion form name if getting
+@treturn[1] number point conversion form value if getting
+@treturn[2] boolean result true for success if setting
+*/
 static int
-openssl_ec_key_conv_form(lua_State *L)
+openssl_key_conv_form(lua_State *L)
 {
   EC_KEY                 *ec = CHECK_OBJECT(1, EC_KEY, "openssl.ec_key");
   point_conversion_form_t cform;
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+
   if (lua_isnone(L, 2)) {
     cform = EC_KEY_get_conv_form(ec);
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+
     openssl_push_point_conversion_form(L, cform);
     lua_pushinteger(L, cform);
     return 2;
@@ -763,18 +922,48 @@ openssl_ec_key_conv_form(lua_State *L)
     cform = lua_tointeger(L, 2);
   else
     cform = openssl_to_point_conversion_form(L, 2, NULL);
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+
   EC_KEY_set_conv_form(ec, cform);
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+
   lua_pushvalue(L, 1);
   return 1;
 }
 
+/***
+get or set encoding flags for EC key
+@function enc_flags
+@tparam[opt] string|number flags encoding flags to set
+@treturn[1] string encoding flags name if getting
+@treturn[1] number encoding flags value if getting
+@treturn[2] boolean result true for success if setting
+*/
 static int
-openssl_ec_key_enc_flags(lua_State *L)
+openssl_key_enc_flags(lua_State *L)
 {
   EC_KEY      *ec = CHECK_OBJECT(1, EC_KEY, "openssl.ec_key");
   unsigned int flags;
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+
   if (lua_isnone(L, 2)) {
     flags = EC_KEY_get_enc_flags(ec);
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+
     openssl_push_group_asn1_flag(L, flags);
     lua_pushinteger(L, flags);
     return 2;
@@ -782,7 +971,18 @@ openssl_ec_key_enc_flags(lua_State *L)
     flags = luaL_checkint(L, 2);
   else
     flags = openssl_to_group_asn1_flag(L, 2, NULL);
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+
   EC_KEY_set_enc_flags(ec, flags);
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+
   lua_pushvalue(L, 1);
   return 1;
 }
@@ -792,38 +992,35 @@ EC_EXT_DEFINE
 #endif
 
 static luaL_Reg ec_key_funs[] = {
-  { "check",       openssl_ec_key_check_key },
-  { "export",      openssl_ec_key_export    },
-  { "parse",       openssl_ec_key_parse     },
-  { "group",       openssl_ec_key_group     },
+  { "check",       openssl_key_check_key },
+  { "export",      openssl_key_export    },
+  { "parse",       openssl_key_parse     },
+  { "group",       openssl_key_group     },
   { "do_sign",     openssl_ecdsa_do_sign    },
   { "do_verify",   openssl_ecdsa_do_verify  },
   { "sign",        openssl_ecdsa_sign       },
   { "verify",      openssl_ecdsa_verify     },
   { "compute_key", openssl_ecdh_compute_key },
   { "set_method",  openssl_ecdsa_set_method },
-  { "conv_form",   openssl_ec_key_conv_form },
-  { "enc_flags",   openssl_ec_key_enc_flags },
+  { "conv_form",   openssl_key_conv_form },
+  { "enc_flags",   openssl_key_enc_flags },
 
 #ifdef EC_EXT
   EC_EXT
 #endif
 
-  { "__gc",        openssl_ec_key_free      },
+  { "__gc",        openssl_key_free      },
   { "__tostring",  auxiliar_tostring        },
 
   { NULL,          NULL                     }
 };
 
-static luaL_Reg ec_point_funs[] = {
-  { "__tostring", auxiliar_tostring     },
-  { "__gc",       openssl_ec_point_free },
-  { "copy",       openssl_ec_point_copy },
-
-  { NULL,         NULL                  }
-};
-
-static LUA_FUNCTION(openssl_ec_list_curve_name)
+/***
+list all available elliptic curve names
+@function list
+@treturn table array of curve names and descriptions
+*/
+static int openssl_list_curve_name(lua_State *L)
 {
   size_t            i = 0;
   size_t            crv_len = EC_get_builtin_curves(NULL, 0);
@@ -853,9 +1050,8 @@ static LUA_FUNCTION(openssl_ec_list_curve_name)
 };
 
 static luaL_Reg R[] = {
-  { "read",      openssl_ec_key_read        },
-  { "list",      openssl_ec_list_curve_name },
-  { "group",     openssl_eckey_group        },
+  { "read",      openssl_key_read        },
+  { "list",      openssl_list_curve_name },
 
   { "do_sign",   openssl_ecdsa_do_sign      },
   { "do_verify", openssl_ecdsa_do_verify    },
@@ -868,12 +1064,18 @@ static luaL_Reg R[] = {
 int
 luaopen_ec(lua_State *L)
 {
-  auxiliar_newclass(L, "openssl.ec_point", ec_point_funs);
-  auxiliar_newclass(L, "openssl.ec_group", ec_group_funs);
   auxiliar_newclass(L, "openssl.ec_key", ec_key_funs);
 
   lua_newtable(L);
   luaL_setfuncs(L, R, 0);
+
+  /* Register group sub-module */
+  luaopen_ec_group(L);
+  lua_setfield(L, -2, "group");
+
+  /* Register point sub-module */
+  luaopen_ec_point(L);
+  lua_setfield(L, -2, "point");
 
   return 1;
 }

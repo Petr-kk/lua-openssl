@@ -38,15 +38,10 @@ static int openssl_push_purpose(lua_State*L, CONSTIFY_OPENSSL X509_PURPOSE* purp
 };
 
 /***
-return all supported purpose as table
+get special purpose info as table or return all supported purposes
 @function purpose
-@treturn table
-*/
-/*
-get special purpose info as table
-@function purpose
-@tparam number|string purpose id or short name
-@treturn table
+@tparam[opt] number|string purpose purpose id or short name (optional)
+@treturn table purpose info table or table of all purposes if no parameter given
 */
 static int openssl_x509_purpose(lua_State*L)
 {
@@ -219,9 +214,9 @@ read x509 from string or bio input
 @function read
 @tparam bio|string input input data
 @tparam[opt='auto'] string format support 'auto','pem','der'
-@treturn x509 certificate object
+@treturn openssl.x509 certificate object
 */
-static LUA_FUNCTION(openssl_x509_read)
+static int openssl_x509_read(lua_State *L)
 {
   X509 *cert = NULL;
   BIO *in = load_bio_object(L, 1);
@@ -256,11 +251,11 @@ static LUA_FUNCTION(openssl_x509_read)
 create or generate a new x509 object.
 @function new
 @tparam[opt] openssl.bn serial serial number
-@tparam[opt] x509_req csr,copy x509_name, pubkey and extension to new object
+@tparam[opt] openssl.x509_req csr copy x509_name, pubkey and extension to new object
 @tparam[opt] x509_name subject subject name set to x509_req
 @tparam[opt] stack_of_x509_extension extensions add to x509
 @tparam[opt] stack_of_x509_attribute attributes add to x509
-@treturn x509 certificate object
+@treturn openssl.x509 certificate object
 */
 static int openssl_x509_new(lua_State* L)
 {
@@ -471,7 +466,7 @@ int openssl_push_x509_signature(lua_State *L, const X509_ALGOR *alg, const ASN1_
   if (sig != NULL)
   {
     lua_pushliteral(L, "sig");
-    lua_pushlstring(L, (const char *)sig->data, sig->length);
+    lua_pushlstring(L, ASN1_STRING_get0_data(sig), ASN1_STRING_length(sig));
     lua_rawset(L, i==0 ? -3 : i);
   }
 
@@ -512,10 +507,10 @@ openssl.x509 object
 /***
 export x509_req to string
 @function export
-@tparam[opt='pem'] string format, 'der' or 'pem' default
+@tparam[opt='pem'] string format 'der' or 'pem' default
 @treturn string
 */
-static LUA_FUNCTION(openssl_x509_export)
+static int openssl_x509_export(lua_State *L)
 {
   X509 *cert = CHECK_OBJECT(1, X509, "openssl.x509");
   int fmt = luaL_checkoption(L, 2, "pem", format);
@@ -544,7 +539,7 @@ parse x509 object as table
 @tparam[opt=true] shortname default will use short object name
 @treturn table result which all x509 information
 */
-static LUA_FUNCTION(openssl_x509_parse)
+static int openssl_x509_parse(lua_State *L)
 {
   int i;
   X509 * cert = CHECK_OBJECT(1, X509, "openssl.x509");
@@ -633,7 +628,7 @@ static LUA_FUNCTION(openssl_x509_parse)
   return 1;
 }
 
-static LUA_FUNCTION(openssl_x509_free)
+static int openssl_x509_free(lua_State *L)
 {
   X509 *cert = CHECK_OBJECT(1, X509, "openssl.x509");
   X509_free(cert);
@@ -643,15 +638,15 @@ static LUA_FUNCTION(openssl_x509_free)
 /***
 get public key of x509
 @function pubkey
-@treturn evp_pkey public key
+@treturn openssl.evp_pkey public key
 */
 /***
 set public key of x509
 @function pubkey
-@tparam evp_pkey pubkey public key set to x509
+@tparam openssl.evp_pkey pubkey public key set to x509
 @treturn boolean result, true for success
 */
-static LUA_FUNCTION(openssl_x509_public_key)
+static int openssl_x509_public_key(lua_State *L)
 {
   X509 *cert = CHECK_OBJECT(1, X509, "openssl.x509");
   if (lua_isnone(L, 2))
@@ -711,15 +706,15 @@ purpose can be one of: ssl_client, ssl_server, ns_ssl_server, smime_sign, smime_
 @tparam[opt] string purpose to check supported
 @treturn boolean result true for check pass
 @treturn integer verify result
-@see verify_cert_error_string
+-- @see OpenSSL function: X509_verify_cert_error_string
 */
 /***
 check x509 with evp_pkey
 @function check
-@tparam evp_pkey pkey private key witch match with x509 pubkey
+@tparam openssl.evp_pkey pkey private key witch match with x509 pubkey
 @treturn boolean result true for check pass
 */
-static LUA_FUNCTION(openssl_x509_check)
+static int openssl_x509_check(lua_State *L)
 {
   X509 * cert = CHECK_OBJECT(1, X509, "openssl.x509");
   if (auxiliar_getclassudata(L, "openssl.evp_pkey", 2))
@@ -803,7 +798,7 @@ check x509 for host (only for openssl 1.0.2 or greater)
 @tparam string host hostname to check for match match with x509 subject
 @treturn boolean result true if host is present and matches the certificate
 */
-static LUA_FUNCTION(openssl_x509_check_host)
+static int openssl_x509_check_host(lua_State *L)
 {
   X509 * cert = CHECK_OBJECT(1, X509, "openssl.x509");
   size_t sz;
@@ -823,7 +818,7 @@ check x509 for email address (only for openssl 1.0.2 or greater)
 @treturn boolean result true if host is present and matches the certificate
 @function check_email
 */
-static LUA_FUNCTION(openssl_x509_check_email)
+static int openssl_x509_check_email(lua_State *L)
 {
   X509 * cert = CHECK_OBJECT(1, X509, "openssl.x509");
   size_t sz;
@@ -839,7 +834,7 @@ check x509 for ip address (ipv4 or ipv6, only for openssl 1.0.2 or greater)
 @tparam string ip to check for match match with x509 subject
 @treturn boolean result true if host is present and matches the certificate
 */
-static LUA_FUNCTION(openssl_x509_check_ip)
+static int openssl_x509_check_ip(lua_State *L)
 {
   X509 * cert = CHECK_OBJECT(1, X509, "openssl.x509");
   const char *ip = luaL_checkstring(L, 2);
@@ -884,12 +879,12 @@ static STACK_OF(X509) * load_all_certs_from_file(BIO *in)
 /***
 get subject name of x509
 @function subject
-@treturn x509_name subject name
+@treturn openssl.x509_name subject name
 */
 /***
 set subject name of x509
 @function subject
-@tparam x509_name subject
+@tparam openssl.x509_name subject
 @treturn boolean result true for success
 */
 static int openssl_x509_subject(lua_State* L)
@@ -911,14 +906,14 @@ static int openssl_x509_subject(lua_State* L)
 /***
 get issuer name of x509
 @function issuer
-@tparam[opt=false] boolean asobject, true for return as x509_name object, or as table
+@tparam[opt=false] boolean asobject true for return as x509_name object, or as table
 @treturn[1] x509_name issuer
 @treturn[1] table issuer name as table
 */
 /***
 set issuer name of x509
 @function issuer
-@tparam x509_name name
+@tparam openssl.x509_name name
 @treturn boolean result true for success
 */
 static int openssl_x509_issuer(lua_State* L)
@@ -940,7 +935,7 @@ static int openssl_x509_issuer(lua_State* L)
 /***
 get digest of x509 object
 @function digest
-@tparam[opt='sha1'] evp_digest|string md_alg, default use 'sha1'
+@tparam[opt='sha1'] evp_digest|string md_alg default use 'sha1'
 @treturn string digest result
 */
 static int openssl_x509_digest(lua_State* L)
@@ -959,14 +954,13 @@ static int openssl_x509_digest(lua_State* L)
 };
 
 /***
-get notbefore valid time of x509
+get or set notbefore valid time of x509
 @function notbefore
-@treturn string notbefore time string
-*/
-/***
-set notbefore valid time of x509
-@function notbefore
-@tparam string|number notbefore
+@tparam[opt] string|number notbefore time to set (optional)
+@treturn[1] string notbefore time string when getting
+@treturn[2] boolean true when setting successfully
+@treturn[3] nil when error occurs
+@treturn[3] string error message when error occurs
 */
 static int openssl_x509_notbefore(lua_State *L)
 {
@@ -1007,14 +1001,13 @@ static int openssl_x509_notbefore(lua_State *L)
 }
 
 /***
-get notafter valid time of x509
+get or set notafter valid time of x509
 @function notafter
-@treturn string notafter time string
-*/
-/***
-set notafter valid time of x509
-@function notafter
-@tparam string|number notafter
+@tparam[opt] string|number notafter time to set (optional)
+@treturn[1] string notafter time string when getting
+@treturn[2] boolean true when setting successfully
+@treturn[3] nil when error occurs
+@treturn[3] string error message when error occurs
 */
 static int openssl_x509_notafter(lua_State *L)
 {
@@ -1057,7 +1050,7 @@ static int openssl_x509_notafter(lua_State *L)
 /***
 check x509 valid
 @function validat
-@tparam[opt] number time, default will use now time
+@tparam[opt] number time default will use now time
 @treturn boolean result true for valid, or for invalid
 @treturn string notbefore
 @treturn string notafter
@@ -1119,17 +1112,29 @@ static int openssl_x509_valid_at(lua_State* L)
 }
 
 /***
-get serial number of x509
+Get or set the serial number of an X.509 certificate.
+
+**Getting** (no second argument or second argument is boolean):
+- If called with only `cert`, returns the serial as a hexadecimal string.
+- If called with `cert` and a boolean `asobject`:
+  - `asobject == true`  → returns the serial as an `ASN1_INTEGER` object (class `openssl.asn1_string`).
+  - `asobject == false` → returns the serial as a `BIGNUM` object (class `openssl.bn`).
+
+**Setting** (second argument is not boolean):
+- Accepts a serial value as a Lua string (hexadecimal), number, `openssl.bn` object, or `openssl.asn1_string` (ASN1_INTEGER).
+- Sets the serial number of the certificate and returns `true` on success, or `false` on failure (with an error pushed).
+
 @function serial
-@tparam[opt=true] boolean asobject
-@treturn[1] bn object
-@treturn[2] string result
-*/
-/***
-set serial number of x509
-@function serial
-@tparam string|number|bn serail
-@treturn boolean result true for success
+@tparam openssl.x509 cert The X.509 certificate object.
+@tparam[opt] boolean|string|number|openssl.bn|openssl.asn1_string arg
+    Optional argument:
+    - If boolean: controls return format when getting.
+    - Otherwise: new serial value to set.
+@treturn string|openssl.asn1_string|openssl.bn
+    When getting: hexadecimal string (no arg), ASN1_INTEGER (arg==true), or BIGNUM (arg==false).
+@treturn boolean
+    When setting: `true` for success, `false` for failure.
+@error Raises a Lua error on invalid argument types or OpenSSL failures.
 */
 static int openssl_x509_serial(lua_State *L)
 {
@@ -1270,7 +1275,7 @@ static int openssl_x509_extensions(lua_State* L)
 /***
 sign x509
 @function sign
-@tparam evp_pkey pkey private key to sign x509
+@tparam openssl.evp_pkey pkey private key to sign x509
 @tparam x509|x509_name cacert or cacert x509_name
 @tparam[opt='sha1WithRSAEncryption'] string|md_digest md_alg
 @treturn boolean result true for check pass
@@ -1345,6 +1350,12 @@ static int openssl_x509_sign(lua_State*L)
   return ret;
 }
 
+/***
+verify X509 certificate signature
+@function verify
+@tparam[opt] evp_pkey|x509 key public key or CA certificate to verify with
+@treturn boolean true if verification succeeds, false otherwise
+*/
 static int openssl_x509_verify(lua_State*L)
 {
   X509* x = CHECK_OBJECT(1, X509, "openssl.x509");
@@ -1378,6 +1389,12 @@ static int openssl_x509_verify(lua_State*L)
   return ret;
 }
 
+/***
+compare two X509 certificates for equality
+@function equal
+@tparam openssl.x509 other X509 certificate to compare with
+@treturn boolean true if certificates are equal, false otherwise
+*/
 static int openssl_x509_equal(lua_State *L)
 {
   X509* x = CHECK_OBJECT(1, X509, "openssl.x509");

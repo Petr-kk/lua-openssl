@@ -32,7 +32,7 @@ create ssl_ctx object, which mapping to SSL_CTX in openssl.
 'DTLSv1','DTLSv1_2', and can be follow by '_server' or '_client', in general you should use 'TLS' to
 negotiate highest available SSL/TLS version
 @tparam[opt] string support_ciphers, if not given, default of openssl will be used
-@treturn ssl_ctx
+@treturn openssl.ssl_ctx
 */
 #if OPENSSL_VERSION_NUMBER > 0x10100000L
 #define TLS_PROTOCOL_TIPS                                                                          \
@@ -63,6 +63,12 @@ typedef enum
   SSL_CTX_MAX_IDX
 } SSL_CTX_INDEX;
 
+/***
+create a new SSL context object
+@function new
+@tparam[opt="TLS"] string method SSL/TLS protocol method ("TLS", "SSLv23", "TLSv1", "TLSv1_1", "TLSv1_2", etc.)
+@treturn openssl.ssl_ctx SSL context object
+*/
 static int
 openssl_ssl_ctx_new(lua_State *L)
 {
@@ -152,7 +158,7 @@ openssl_ssl_ctx_new(lua_State *L)
     method = TLSv1_client_method();
 #endif
 
-#ifndef OPENSSL_NO_SSL3_METHOD
+#if OPENSSL_VERSION_NUMBER < 0x40000000L && !defined(OPENSSL_NO_SSL3_METHOD)
   else if (strcmp(meth, "SSLv3") == 0)
     method = SSLv3_method();
   else if (strcmp(meth, "SSLv3_server") == 0)
@@ -231,6 +237,11 @@ openssl_ssl_alert_desc(lua_State *L)
   return 1;
 }
 
+/***
+create new SSL session object
+@function session_new
+@treturn ssl_session new SSL session object
+*/
 static int
 openssl_ssl_session_new(lua_State *L)
 {
@@ -239,6 +250,12 @@ openssl_ssl_session_new(lua_State *L)
   return 1;
 }
 
+/***
+read SSL session from BIO or string data
+@function session_read
+@tparam bio|string input BIO object or string containing session data (PEM or DER format)
+@treturn ssl_session|nil SSL session object or nil on error
+*/
 static int
 openssl_ssl_session_read(lua_State *L)
 {
@@ -266,7 +283,7 @@ static luaL_Reg R[] = {
   { NULL,           NULL                     }
 };
 
-/****************************SSL CTX********************************/
+/* SSL CTX object */
 /***
 openssl.ssl_ctx object
 @type ssl_ctx
@@ -275,8 +292,8 @@ openssl.ssl_ctx object
 /***
 tell ssl_ctx use private key and certificate, and check private key
 @function use
-@tparam evp_pkey pkey
-@tparam x509 cert
+@tparam openssl.evp_pkey pkey
+@tparam openssl.x509 cert
 @treturn boolean result return true for ok, or nil followed by errmsg and errval
 */
 static int
@@ -304,7 +321,7 @@ openssl_ssl_ctx_use(lua_State *L)
 /***
 add client ca cert and option extra chain cert
 @function add
-@tparam x509 clientca
+@tparam openssl.x509 clientca
 @tparam[opt] table extra_chain_cert_array
 @treturn boolean result
 */
@@ -342,7 +359,7 @@ openssl_ssl_ctx_gc(lua_State *L)
 /***
 get timeout
 @function timeout
-@return number
+@treturn number timeout value
 */
 /***
 set timeout
@@ -390,7 +407,7 @@ mode support
 @function mode
 @tparam boolean clear must be true
 @tparam string mode
-@param[opt] ...
+@tparam[opt] ... extra arguments
 @treturn string
 @treturn ...
 @usage
@@ -653,6 +670,12 @@ openssl_ssl_ctx_cert_store(lua_State *L)
 }
 
 #ifndef OPENSSL_NO_ENGINE
+/***
+set client certificate engine for SSL context
+@function set_engine
+@tparam openssl.engine eng engine object to use for client certificates
+@treturn boolean result true for success
+*/
 static int
 openssl_ssl_ctx_set_engine(lua_State *L)
 {
@@ -663,21 +686,34 @@ openssl_ssl_ctx_set_engine(lua_State *L)
 }
 #endif
 
-/****************************************************************************/
+/* ssl functions */
 /***
-create ssl object
+create SSL object from SSL context
+
+This function creates a new SSL object from an SSL context. It supports two modes:
+1. Using a file descriptor (fd)
+2. Using BIO objects for input/output
+
 @function ssl
-@tparam number fd
-@tparam[opt=false] boolean server, true will make ssl server
-@treturn ssl
-*/
-/***
-create ssl object
-@function ssl
-@tparam bio input
-@tparam[opt=input] bio ouput, default will use input as output
-@tparam[opt=false] boolean server, true will make ssl server
-@treturn ssl
+@tparam openssl.ssl_ctx ctx SSL context object
+@tparam number|openssl.bio fd_or_input File descriptor or input BIO
+@tparam[opt=false] boolean|openssl.bio server_or_output Server mode flag or output BIO
+@treturn[1] openssl.ssl SSL object on success
+@treturn[2] nil on error
+@treturn[2] string error message
+-- @see OpenSSL function: SSL_new
+-- @see OpenSSL function: SSL_set_fd
+-- @see OpenSSL function: SSL_set_bio
+@usage
+  -- Create SSL object from file descriptor
+  local ssl_ctx = require('openssl').ssl.ctx_new('TLS')
+  local fd = 5  -- Assume fd 5 is a connected socket
+  local ssl = ssl_ctx:ssl(fd)
+
+  -- Create SSL server object from BIO
+  local bio_in = require('openssl').bio.new('mem')
+  local bio_out = require('openssl').bio.new('mem')
+  local ssl = ssl_ctx:ssl(bio_in, bio_out, true)  -- true for server mode
 */
 static int
 openssl_ssl_ctx_new_ssl(lua_State *L)
@@ -746,7 +782,7 @@ create bio object
 @tparam string host_addr format like 'host:port'
 @tparam[opt=false] boolean server, true listen at host_addr,false connect to host_addr
 @tparam[opt=true] boolean autoretry ssl operation autoretry mode
-@treturn bio bio object
+@treturn openssl.bio bio object
 */
 static int
 openssl_ssl_ctx_new_bio(lua_State *L)
@@ -824,7 +860,7 @@ static const char *sVerifyMode_Options[] = { "none",
 get verify_mode, return number mode and all string modes list
 @function verify_mode
 @treturn number mode_code
-@return ...
+@treturn ... mode code and mode strings
   none: not verify client cert
   peer: verify client cert
   fail: if client not have cert, will failure
@@ -907,12 +943,14 @@ set certificate verify callback function
 @tparam[opt] function cert_verify_cb with boolean function(verifyargs) prototype, if nil or none
 will use openssl default callback verifyargs has field 'error',
 'error_string','error_depth','current_cert'
+@treturn various return value
 */
 /***
 set certificate verify options
 @function set_cert_verify
 @tparam table verify_cb_flag support field always_continue with boolean value and verify_depth with
 number value.
+@treturn boolean result true for success
 */
 static int
 openssl_ssl_ctx_set_cert_verify(lua_State *L)
@@ -940,6 +978,7 @@ openssl_ssl_ctx_set_cert_verify(lua_State *L)
 set the list of client ALPN protocols available to be negotiated by the server
 @function set_alpn_protos
 @tparam table protos the protocol list
+@treturn various return value
 */
 static int
 openssl_ssl_ctx_set_alpn_protos(lua_State *L)
@@ -969,10 +1008,20 @@ openssl_ssl_ctx_set_alpn_protos(lua_State *L)
         break;
       }
       if (proto_list_len + proto_len >= proto_list_size) {
+        unsigned char *tmp;
         do {
+          if (proto_list_size > (size_t)(-1) / 2) {
+            free(proto_list);
+            return luaL_error(L, "protocol list too large");
+          }
           proto_list_size = proto_list_size * 2;
         } while (proto_list_len + proto_len >= proto_list_size);
-        proto_list = realloc(proto_list, proto_list_size);
+        tmp = realloc(proto_list, proto_list_size);
+        if (tmp == NULL) {
+          free(proto_list);
+          return luaL_error(L, "fail to allocate protocol list");
+        }
+        proto_list = tmp;
       }
       if (proto_list == NULL) {
         err = "fail to allocate protocol list";
@@ -1058,6 +1107,7 @@ connection
 @function set_alpn_select_cb
 @tparam[opt] function alpn_select_cb callback that receive the prototype list as a table and return
 the one selected as a string
+@treturn various return value
 */
 static int
 openssl_ssl_ctx_set_alpn_select_cb(lua_State *L)
@@ -1193,13 +1243,15 @@ set temp callback
 @function set_tmp
 @tparam string keytype, 'dh','ecdh',or 'rsa'
 @tparam function tmp_cb
-@param[opt] vararg
+@tparam[opt] ... vararg
+@treturn userdata object created
 */
 /***
 set tmp key content pem format
 @function set_tmp
 @tparam string keytype, 'dh','ecdh',or 'rsa'
 @tparam[opt] string private key file
+@treturn boolean result true for success
 */
 
 static int
@@ -1402,6 +1454,7 @@ set session callback
 @tparam function new
 @tparam function get
 @tparam function remove
+@treturn various return value
 */
 
 static int
@@ -1513,21 +1566,29 @@ openssl_ssl_ctx_set_session_callback(lua_State *L)
 }
 
 /***
-flush sessions
-@function flush
+flush all sessions established before the given time
+@function flush_sessions
+@tparam number time flush sessions older than this unix timestamp
+@treturn number always 0
 */
 static int
 openssl_ssl_ctx_flush_sessions(lua_State *L)
 {
   SSL_CTX *ctx = CHECK_OBJECT(1, SSL_CTX, "openssl.ssl_ctx");
   long     tm = luaL_checkinteger(L, 2);
+#if OPENSSL_VERSION_NUMBER >= 0x30400000L && !defined(LIBRESSL_VERSION_NUMBER)
+  /* Use SSL_CTX_flush_sessions_ex for OpenSSL 3.4+ (Y2038-safe) */
+  SSL_CTX_flush_sessions_ex(ctx, (time_t)tm);
+#else
   SSL_CTX_flush_sessions(ctx, tm);
+#endif
   return 0;
 }
 
 /***
 set ssl session
 @function sessions
+@treturn various return value
 */
 static int
 openssl_ssl_ctx_sessions(lua_State *L)
@@ -1560,7 +1621,7 @@ get current session cache mode
 set session cache mode,and return old mode
 @function session_cache_mode
 @tparam string mode support 'no_auto_clear','server','client','both','off',
-'no_auto_clear' can be combine with others, so accept one or two param.
+@treturn table old modes as array
 */
 static int
 openssl_session_cache_mode(lua_State *L)
@@ -1639,6 +1700,12 @@ openssl_session_cache_mode(lua_State *L)
 }
 
 #if OPENSSL_VERSION_NUMBER > 0x1010100FL && !defined(LIBRESSL_VERSION_NUMBER)
+/***
+get or set number of TLS tickets
+@function num_tickets
+@tparam[opt] number num number of tickets to set
+@treturn number current number of tickets
+*/
 static int
 openssl_ssl_ctx_num_tickets(lua_State *L)
 {
@@ -1706,7 +1773,7 @@ static luaL_Reg ssl_ctx_funcs[] = {
   { NULL,                      NULL                                    },
 };
 
-/****************************SSL SESSION********************************/
+/* SSL SESSION functions */
 /***
 get peer certificate verify result
 @function getpeerverification
@@ -1730,10 +1797,28 @@ openssl_ssl_getpeerverification(lua_State *L)
   return 2;
 }
 
+/***
+get or set SSL session time
+@function time
+@tparam[opt] number time session time to set (Unix timestamp)
+@treturn number current session time (if getting) or previous time (if setting)
+*/
 static int
 openssl_ssl_session_time(lua_State *L)
 {
   SSL_SESSION *session = CHECK_OBJECT(1, SSL_SESSION, "openssl.ssl_session");
+#if OPENSSL_VERSION_NUMBER >= 0x30400000L && !defined(LIBRESSL_VERSION_NUMBER)
+  time_t       time;
+  if (!lua_isnone(L, 2)) {
+    time = (time_t)luaL_checklong(L, 2);
+    time_t prev_time = SSL_SESSION_set_time_ex(session, time);
+    lua_pushinteger(L, (lua_Integer)prev_time);
+    return 1;
+  }
+  time = SSL_SESSION_get_time_ex(session);
+  lua_pushinteger(L, (lua_Integer)time);
+  return 1;
+#else
   int          time;
   if (!lua_isnone(L, 2)) {
     time = luaL_checklong(L, 2);
@@ -1744,8 +1829,15 @@ openssl_ssl_session_time(lua_State *L)
   time = SSL_SESSION_get_time(session);
   lua_pushinteger(L, time);
   return 1;
+#endif
 }
 
+/***
+get or set SSL session timeout
+@function timeout
+@tparam[opt] number timeout session timeout in seconds to set
+@treturn number current session timeout (if getting) or previous timeout (if setting)
+*/
 static int
 openssl_ssl_session_timeout(lua_State *L)
 {
@@ -1770,6 +1862,11 @@ openssl_ssl_session_gc(lua_State *L)
   return 0;
 }
 
+/***
+get peer certificate from SSL session
+@function peer
+@treturn openssl.x509 peer certificate from the session
+*/
 static int
 openssl_ssl_session_peer(lua_State *L)
 {
@@ -1780,6 +1877,13 @@ openssl_ssl_session_peer(lua_State *L)
   return 1;
 }
 
+/***
+get or set SSL session ID
+@function id
+@tparam[opt] string id optional session ID to set
+@treturn string current session ID when called without parameters
+@treturn boolean true when setting session ID successfully (OpenSSL 1.1.0+)
+*/
 static int
 openssl_ssl_session_id(lua_State *L)
 {
@@ -1804,6 +1908,11 @@ openssl_ssl_session_id(lua_State *L)
   }
 }
 
+/***
+get the compression algorithm id used by the SSL session
+@function compress_id
+@treturn integer compression algorithm id, 0 if compression is not used
+*/
 static int
 openssl_ssl_session_compress_id(lua_State *L)
 {
@@ -1813,6 +1922,12 @@ openssl_ssl_session_compress_id(lua_State *L)
   return 1;
 }
 
+/***
+export SSL session to PEM or DER format
+@function export
+@tparam[opt=true] boolean pem true for PEM format, false for DER format
+@treturn string exported session data in specified format
+*/
 static int
 openssl_ssl_session_export(lua_State *L)
 {
@@ -1833,6 +1948,11 @@ openssl_ssl_session_export(lua_State *L)
 }
 
 #if OPENSSL_VERSION_NUMBER > 0x10101000L && !defined(LIBRESSL_VERSION_NUMBER)
+/***
+check if SSL session is resumable
+@function is_resumable
+@treturn boolean true if session can be resumed
+*/
 static int
 openssl_ssl_session_is_resumable(lua_State *L)
 {
@@ -1844,6 +1964,11 @@ openssl_ssl_session_is_resumable(lua_State *L)
 #endif
 
 #if OPENSSL_VERSION_NUMBER > 0x10100000L
+/***
+check if SSL session has a ticket
+@function has_ticket
+@treturn boolean true if session has a ticket
+*/
 static int
 openssl_ssl_session_has_ticket(lua_State *L)
 {
@@ -1874,7 +1999,7 @@ static luaL_Reg ssl_session_funcs[] = {
   { NULL,           NULL                             },
 };
 
-/***************************SSL**********************************/
+/* SSL object */
 /***
 openssl.ssl object
 All SSL object IO operation methods(connect, accept, handshake, read,
@@ -1903,8 +2028,8 @@ openssl_ssl_clear(lua_State *L)
 /***
 tell ssl use private key and certificate, and check private key
 @function use
-@tparam evp_pkey pkey
-@tparam[opt] x509 cert
+@tparam openssl.evp_pkey pkey
+@tparam[opt] openssl.x509 cert
 @treturn boolean result return true for ok, or nil followed by errmsg and errval
 */
 static int
@@ -1928,7 +2053,7 @@ openssl_ssl_use(lua_State *L)
 /***
 get peer certificate and certificate chains
 @function peer
-@treturn[1] x509 certificate
+@treturn[1] openssl.x509 certificate
 @treturn[1] sk_of_x509 chains of peer
 */
 static int
@@ -2044,7 +2169,7 @@ openssl_ssl_pending(lua_State *L)
   return 1;
 }
 
-/*********************************************/
+/* Helper function to push SSL result */
 static int
 openssl_ssl_pushresult(lua_State *L, SSL *ssl, int ret_code)
 {
@@ -2145,7 +2270,7 @@ get value according to arg
  <br/>hostname
  <br/>state_string
  <br/>side
-@return according to arg
+@treturn ... value according to arg
 */
 static int
 openssl_ssl_get(lua_State *L)
@@ -2227,8 +2352,8 @@ set value according to arg
  <br/>trust:
  <br/>verify_result:
  <br/>hostname:
-@param value val type accroding to arg
-@return value
+@tparam ... value type according to arg
+@treturn ... value
 */
 static int
 openssl_ssl_set(lua_State *L)
@@ -2410,6 +2535,11 @@ openssl_ssl_renegotiate(lua_State *L)
   return openssl_ssl_pushresult(L, s, ret);
 }
 
+/***
+perform abbreviated SSL renegotiation
+@function renegotiate_abbreviated
+@treturn boolean result true for success
+*/
 static int
 openssl_ssl_renegotiate_abbreviated(lua_State *L)
 {
@@ -2445,15 +2575,15 @@ shutdown ssl connection with quite or noquite mode
 @treturn boolean if mode is true, return true or false for quite
 @treturn string if mode is false, return 'read' or 'write' for shutdown direction
 */
+
 /***
 shutdown SSL connection
 @function shutdown
-*/
-/***
-shutdown ssl connect with special mode, disable read or write,
-enable or disable quite shutdown
-@function shutdown
-@tparam string mode support 'read','write', 'quite', 'noquite'
+@tparam[opt] string mode optional mode: 'read', 'write', 'quite', 'noquite'
+@treturn[1] boolean true for success when called without mode
+@treturn[2] number shutdown result when called with mode
+@treturn[3] nil when error occurs
+@treturn[3] string error message when error occurs
 */
 static int
 openssl_ssl_shutdown(lua_State *L)
@@ -2498,6 +2628,7 @@ openssl_ssl_shutdown(lua_State *L)
 /***
 make ssl to client mode
 @function set_connect_state
+@treturn various return value
 */
 static int
 openssl_ssl_set_connect_state(lua_State *L)
@@ -2510,6 +2641,7 @@ openssl_ssl_set_connect_state(lua_State *L)
 /***
 make ssl to server mode
 @function set_accept_state
+@treturn various return value
 */
 static int
 openssl_ssl_set_accept_state(lua_State *L)
@@ -2521,7 +2653,7 @@ openssl_ssl_set_accept_state(lua_State *L)
 
 /***
 duplicate ssl object
-@treturn ssl
+@treturn openssl.ssl
 @function dup
 */
 static int
@@ -2548,6 +2680,7 @@ openssl_ssl_dup(lua_State *L)
 /***
 get ssl session resused
 @function session_reused
+@treturn boolean success status
 */
 static int
 openssl_ssl_session_reused(lua_State *L)
@@ -2558,6 +2691,11 @@ openssl_ssl_session_reused(lua_State *L)
   return 1;
 }
 
+/***
+check if SSL session was reused (cache hit)
+@function cache_hit
+@treturn boolean true if session was not reused (cache miss)
+*/
 static int
 openssl_ssl_cache_hit(lua_State *L)
 {
@@ -2567,6 +2705,12 @@ openssl_ssl_cache_hit(lua_State *L)
   return 1;
 }
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
+/***
+set debug level for SSL connection
+@function set_debug
+@tparam number debug debug level to set
+@treturn number always returns 0
+*/
 static int
 openssl_ssl_set_debug(lua_State *L)
 {
@@ -2580,13 +2724,13 @@ openssl_ssl_set_debug(lua_State *L)
 /***
 get ssl_ctx associate with current ssl
 @function ctx
-@treturn ssl_ctx
+@treturn openssl.ssl_ctx
 */
 /***
 set ssl_ctx associate to current ssl
 @function ctx
-@tparam ssl_ctx ctx
-@treturn ssl_ctx orgine ssl_ctx object
+@tparam openssl.ssl_ctx ctx
+@treturn openssl.ssl_ctx orgine ssl_ctx object
 */
 static int
 openssl_ssl_ctx(lua_State *L)
@@ -2649,6 +2793,11 @@ openssl_ssl_session(lua_State *L)
   return 1;
 }
 
+/***
+convert SSL object to string representation
+@function __tostring
+@treturn string string representation of SSL object
+*/
 static int
 openssl_ssl_tostring(lua_State *L)
 {
@@ -2750,6 +2899,11 @@ luaopen_ssl(lua_State *L)
 
   lua_pushstring(L, SSL_DEFAULT_CIPHER_LIST);
   lua_setfield(L, -2, "DEFAULT_CIPHER_LIST");
+
+#if (OPENSSL_VERSION_NUMBER >= 0x30000000L) && !defined(LIBRESSL_VERSION_NUMBER)
+  /* Register PQC TLS integration methods into ssl.ctx */
+  ssl_pqc_register_ctx_methods(L, -1);
+#endif
 
   return 1;
 }

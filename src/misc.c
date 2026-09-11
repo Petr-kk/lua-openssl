@@ -4,6 +4,18 @@
 *
 * Author:  george zhao <zhaozg(at)gmail.com>
 \*=========================================================================*/
+
+/***
+misc module with utility functions for lua-openssl
+
+This module provides various utility functions and helpers that are
+used throughout the lua-openssl library for data conversion,
+formatting, and common operations.
+
+@module misc
+@usage
+  misc = require('openssl').misc
+*/
 #include "openssl.h"
 #include "private.h"
 const char *format[] = { "auto", "der", "pem", "smime", NULL };
@@ -119,9 +131,16 @@ BN_get(lua_State *L, int i)
 {
   BIGNUM *x = BN_new();
   switch (lua_type(L, i)) {
-  case LUA_TNUMBER:
-    BN_set_word(x, lua_tointeger(L, i));
+  case LUA_TNUMBER: {
+    lua_Integer num = lua_tointeger(L, 3);
+    if (num < 0) {
+      BN_set_word(x, -num);
+      BN_set_negative(x, 1);
+    } else {
+      BN_set_word(x, num);
+    }
     break;
+  }
   case LUA_TSTRING: {
     const char *s = lua_tostring(L, i);
     if (s[0] == 'X' || s[0] == 'x')
@@ -166,12 +185,17 @@ openssl_pushresult(lua_State *L, int result)
     return 1;
   } else {
     unsigned long val = ERR_get_error();
+    const char    *reason = val ? ERR_reason_error_string(val) : NULL;
     lua_pushnil(L);
+    /* ERR_reason_error_string() may return NULL for error codes whose
+     * reason table is not registered (e.g. provider errors). Pushing that
+     * NULL would yield a second nil on the Lua side, so callers could no
+     * longer tell a failed call from a nil result. Fall back to a generic
+     * message while still exposing the error code. */
+    lua_pushstring(L, reason ? reason : "UNKNOWN ERROR");
     if (val) {
-      lua_pushstring(L, ERR_reason_error_string(val));
       lua_pushinteger(L, val);
     } else {
-      lua_pushstring(L, "UNKNOWN ERROR");
       lua_pushnil(L);
     }
     return 3;

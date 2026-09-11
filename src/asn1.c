@@ -22,7 +22,9 @@ static LuaL_Enumeration asn1_const[] = {
   { "CONSTRUCTED",       V_ASN1_CONSTRUCTED       },
   { "PRIMITIVE_TAG",     V_ASN1_PRIMITIVE_TAG     },
   { "PRIMATIVE_TAG",     V_ASN1_PRIMATIVE_TAG     },
+#ifdef V_ASN1_APP_CHOOSE
   { "APP_CHOOSE",        V_ASN1_APP_CHOOSE        },
+#endif
   { "OTHER",             V_ASN1_OTHER             },
   { "ANY",               V_ASN1_ANY               },
 
@@ -68,12 +70,19 @@ static LuaL_Enumeration asn1_const[] = {
 #define CLS_IDX_OFFSET 0
 #define CLS_IDX_LENGTH 4
 
+#ifdef V_ASN1_APP_CHOOSE
 #define TAG_IDX_OFFSET 11
 #define TAG_IDX_LENGTH 31
+#else
+#define TAG_IDX_OFFSET 10
+#define TAG_IDX_LENGTH 30
+#endif
 
 /***
 create asn1_type object
 @function new_type
+@tparam boolean|number|string|asn1_string value value to create ASN1_TYPE from
+@treturn asn1_type|nil new ASN1_TYPE object or nil on error
 */
 static int
 openssl_asn1type_new(lua_State *L)
@@ -173,7 +182,7 @@ do der encode and return encoded string partly head or full
 @function put_object
 @tparam number tag
 @tparam number class
-@tparam[opt=nil] number|string length or date to encode, defualt will make
+@tparam[opt=nil] number|string val length or data to encode, defualt will make
 indefinite length constructed
 @tparam[opt=nil] boolean constructed or not
 @treturn string der encoded string or head when not give data
@@ -229,6 +238,7 @@ make tag, class number to string
 @function tostring
 @tparam number clsortag which to string
 @tparam string range only accept 'class' or 'tag'
+@treturn string result
 */
 static int
 openssl_asn1_tostring(lua_State *L)
@@ -271,10 +281,9 @@ create asn1_string object
 "graphics", "iso64", "visible", "general", "unversal", "bmp", "utctime" </p>
 
 @function new_string
-@tparam string data to create new asn1_string
+@tparam string data create new asn1_string with data
 @tparam[opt] string type asn1 string type, defult with 'utf8'
 @treturn asn1_string
-@see asn1_string
 */
 static int
 openssl_asn1string_new(lua_State *L)
@@ -290,11 +299,10 @@ openssl_asn1string_new(lua_State *L)
 
 /***
 create asn1_integer object
-
 @function new_integer
-@tparam number|bn integer to create new asn1_integer
-@treturn asn1_integer
-@see asn1_integer
+@tparam number|bn value integer value or bignum
+@treturn openssl.asn1_integer new ASN1_INTEGER object
+-- @see openssl/asn1.h:ASN1_INTEGER_
 */
 static int
 openssl_asn1int_new(lua_State *L)
@@ -315,10 +323,12 @@ openssl_asn1int_new(lua_State *L)
 }
 
 /***
-create asn1_time object
+create asn1_time object using generalized time format
+
 @function new_generalizedtime
 @tparam none|number|string time
 @treturn asn1_time
+-- @see openssl/asn1.h:ASN1_STRING_
 */
 static int
 openssl_asn1generalizedtime_new(lua_State *L)
@@ -347,10 +357,11 @@ openssl_asn1generalizedtime_new(lua_State *L)
 }
 
 /***
-create asn1_time object
+create asn1_time object using UTC time format
 @function new_utctime
 @tparam none|number|string time
 @treturn asn1_time
+-- @see openssl/asn1.h:ASN1_STRING_
 */
 static int
 openssl_asn1utctime_new(lua_State *L)
@@ -404,31 +415,43 @@ openssl_txt2nid(lua_State *L)
 }
 
 /***
-create asn1_object object
+create asn1_object from string identifier
 
 @function new_object
-@tparam string name_or_oid  short name,long name or oid string
-@tparam[opt] boolean no_name  true for only oid string, default is false
-@treturn asn1_object mapping to ASN1_OBJECT in openssl
-@see asn1_object
+@tparam string name_or_oid short name (e.g., "C"), long name (e.g., "countryName"), or OID string (e.g., "2.5.4.6")
+@tparam[opt=false] boolean no_name true for only oid string parsing, false to allow names
+@treturn openssl.asn1_object|nil ASN1_OBJECT mapping or nil on error
+-- @see openssl/asn1.h:ASN1_OBJECT_
+@usage
+  local obj1 = asn1.new_object("C")           -- short name
+  local obj2 = asn1.new_object("countryName") -- long name
+  local obj3 = asn1.new_object("2.5.4.6")     -- OID string
 */
 
 /***
-create asn1_object object
+create asn1_object from NID
 
 @function new_object
-@tparam integer nid ident to asn1_object
-@treturn asn1_object mapping to ASN1_OBJECT in openssl
-@see asn1_object
+@tparam integer nid numeric identifier for the ASN1_OBJECT
+@treturn openssl.asn1_object|nil ASN1_OBJECT mapping or nil on error
+-- @see openssl/asn1.h:ASN1_OBJECT_
+@usage
+  local obj = asn1.new_object(14)  -- NID for countryName
 */
 
 /***
-create asn1_object object
+create asn1_object from table definition
 
 @function new_object
-@tparam table options have sn, ln, oid keys to create asn1_object
-@treturn asn1_object mapping to ASN1_OBJECT in openssl
-@see asn1_object
+@tparam table options table with sn (short name), ln (long name), oid keys to create new asn1_object
+@treturn openssl.asn1_object|nil ASN1_OBJECT mapping or nil on error
+-- @see openssl/asn1.h:ASN1_OBJECT_
+@usage
+  local obj = asn1.new_object({
+    oid = "1.2.3.4.5.6",
+    sn = "myShortName",
+    ln = "myLongName"
+  })
 */
 static int
 openssl_asn1object_new(lua_State *L)
@@ -481,7 +504,14 @@ openssl_asn1object_new(lua_State *L)
       ret = 1;
     }
   } else if (lua_isnone(L, 1)) {
-    ASN1_OBJECT *obj = ASN1_OBJECT_new();
+    /* ASN1_OBJECT_new() is deprecated in OpenSSL 4.0,
+     * but there's no direct replacement for creating an empty object.
+     * We create an object from a dummy NID instead. */
+    ASN1_OBJECT *obj = OBJ_nid2obj(NID_undef);
+    if (obj == NULL) {
+        /* Fallback: create from empty string */
+        obj = OBJ_txt2obj("", 1);
+    }
     PUSH_OBJECT(obj, "openssl.asn1_object");
     ret = 1;
   }
@@ -491,7 +521,7 @@ openssl_asn1object_new(lua_State *L)
 
 /***
 convert der encoded asn1type string to object
-@function asn1type_di2
+@function d2i_asn1type
 @tparam string der
 @treturn asn1type object for success, and nil for fail
 */
@@ -529,6 +559,11 @@ static luaL_Reg R[] = {
   { NULL,                  NULL                            }
 };
 
+/***
+get the ASN.1 type tag number
+@function type
+@treturn number the ASN.1 type tag number
+*/
 static int
 openssl_asn1type_type(lua_State *L)
 {
@@ -537,6 +572,13 @@ openssl_asn1type_type(lua_State *L)
   return 1;
 }
 
+/***
+get or set octet string data for asn1_type object
+@function octet
+@tparam[opt] string data optional octet string data to set
+@treturn string current octet string data when called without parameters
+@treturn boolean true when setting data successfully
+*/
 static int
 openssl_asn1type_octet(lua_State *L)
 {
@@ -561,6 +603,12 @@ openssl_asn1type_octet(lua_State *L)
   }
 }
 
+/***
+compare two asn1_type objects
+@function cmp
+@tparam asn1_type other another asn1_type object to compare with
+@treturn boolean true if both asn1_type objects are equal, false otherwise
+*/
 static int
 openssl_asn1type_cmp(lua_State *L)
 {
@@ -579,6 +627,11 @@ openssl_asn1type_free(lua_State *L)
   return 0;
 }
 
+/***
+convert asn1_type to asn1_string object
+@function asn1string
+@treturn openssl.asn1_string|nil asn1_string object or nil if conversion is not supported
+*/
 static int
 openssl_asn1type_asn1string(lua_State *L)
 {
@@ -592,6 +645,11 @@ openssl_asn1type_asn1string(lua_State *L)
   return ret;
 }
 
+/***
+serialize asn1_type object to DER encoded string
+@function i2d
+@treturn string DER encoded representation of the asn1_type object
+*/
 static int
 openssl_asn1type_i2d(lua_State *L)
 {
@@ -612,11 +670,13 @@ openssl_push_asn1type(lua_State *L, const ASN1_TYPE *type)
 {
   lua_newtable(L);
 
-#define P(V, v)                                                                                    \
-  case V_##V: {                                                                                    \
-    V *s = (V *)type->value.ptr;                                                                   \
-    AUXILIAR_SETLSTR(L, -1, "value", (const char *)s->data, s->length);                            \
-    break;                                                                                         \
+#define P(V, v)                                                  \
+  case V_##V: {                                                  \
+    V *s = (V *)type->value.ptr;                                 \
+    AUXILIAR_SETLSTR(L, -1, "value",                             \
+                     (const char *)ASN1_STRING_get0_data(s),     \
+                     ASN1_STRING_length(s));                     \
+    break;                                                       \
   }
 
   switch (type->type) {
@@ -649,7 +709,7 @@ openssl_push_asn1type(lua_State *L, const ASN1_TYPE *type)
 
   default: {
     ASN1_STRING *s = (ASN1_STRING *)type->value.asn1_string;
-    AUXILIAR_SETLSTR(L, -1, "value", (const char *)s->data, s->length);
+    AUXILIAR_SETLSTR(L, -1, "value", ASN1_STRING_get0_data(s), ASN1_STRING_length(s));
     break;
   }
   }
@@ -669,6 +729,11 @@ openssl_push_asn1type(lua_State *L, const ASN1_TYPE *type)
   return 1;
 }
 
+/***
+get detailed information about asn1_type object
+@function info
+@treturn table containing type information and data
+*/
 static int
 openssl_asn1type_info(lua_State *L)
 {
@@ -788,7 +853,7 @@ openssl_asn1object_txt(lua_State *L)
 compare two asn1_objects, if equals return true
 
 @function equals
-@tparam asn1_object another to compre
+@tparam openssl.asn1_object another to compre
 @treturn boolean true if equals
 */
 static int
@@ -833,7 +898,7 @@ openssl_asn1object_free(lua_State *L)
 make a clone of asn1_object
 
 @function dup
-@treturn asn1_object clone for self
+@treturn openssl.asn1_object clone for self
 */
 static int
 openssl_asn1object_dup(lua_State *L)
@@ -857,8 +922,13 @@ openssl_asn1object_d2i(lua_State *L)
   size_t               l;
   ASN1_OBJECT         *o = CHECK_OBJECT(1, ASN1_OBJECT, "openssl.asn1_object");
   const unsigned char *p = (const unsigned char *)luaL_checklstring(L, 2, &l);
-
-  lua_pushboolean(L, d2i_ASN1_OBJECT(&o, &p, l) != NULL);
+  ASN1_OBJECT         *no = d2i_ASN1_OBJECT(NULL, &p, l);
+  if (no != NULL) {
+    ASN1_OBJECT_free(o);
+    void **ud = lua_touserdata(L, 1);
+    *ud = no;
+  }
+  lua_pushboolean(L, no != NULL);
   return 1;
 }
 
@@ -909,6 +979,12 @@ static luaL_Reg asn1obj_funcs[] = {
 openssl.asn1_integer object
 @type asn1_integer
 */
+/***
+convert ASN1 integer to/from big number
+@function bn
+@tparam[opt] openssl.bn number big number to set, or nil to get current value
+@treturn openssl.bn big number representation if getting, or previous value if setting
+*/
 static int
 openssl_asn1int_bn(lua_State *L)
 {
@@ -931,15 +1007,20 @@ openssl.asn1_string object
 */
 
 /***
+set value of ASN1 object
+
 @function set
+@tparam number|string value value to set (number for integers/times, string for time strings)
+@treturn boolean result true for success
 */
 static int
 openssl_asn1group_set(lua_State *L)
 {
   ASN1_STRING *s = CHECK_GROUP(1, ASN1_STRING, "openssl.asn1group");
   int          ret = 1;
+  int          type = ASN1_STRING_type(s);
 
-  switch (s->type) {
+  switch (type) {
   case V_ASN1_INTEGER: {
     ASN1_INTEGER *ai = CHECK_OBJECT(1, ASN1_INTEGER, "openssl.asn1_integer");
     long          v = luaL_checklong(L, 2);
@@ -978,16 +1059,19 @@ static time_t
 ASN1_TIME_get(ASN1_TIME *time, time_t off)
 {
   struct tm   t;
-  const char *str = (const char *)time->data;
   size_t      i = 0;
+  const char *str = (const char *)ASN1_STRING_get0_data(time);
+  size_t      len = ASN1_STRING_length(time);
+  int         type = ASN1_STRING_type(time);
 
+  if (len < 13) return 0;  /* Invalid time format */
   memset(&t, 0, sizeof(t));
 
-  if (time->type == V_ASN1_UTCTIME) /* two digit year */ {
+  if (type == V_ASN1_UTCTIME) /* two digit year */ {
     t.tm_year = (str[i++] - '0') * 10;
     t.tm_year += (str[i++] - '0');
     if (t.tm_year < 70) t.tm_year += 100;
-  } else if (time->type == V_ASN1_GENERALIZEDTIME) /* four digit year */ {
+  } else if (type == V_ASN1_GENERALIZEDTIME) /* four digit year */ {
     t.tm_year = (str[i++] - '0') * 1000;
     t.tm_year += (str[i++] - '0') * 100;
     t.tm_year += (str[i++] - '0') * 10;
@@ -1010,14 +1094,17 @@ ASN1_TIME_get(ASN1_TIME *time, time_t off)
 }
 
 /***
+get value from ASN1 object
+
 @function get
+@treturn number|bn value extracted from ASN1 object (bn for integers, number for times)
 */
 static int
 openssl_asn1group_get(lua_State *L)
 {
   ASN1_STRING *s = CHECK_GROUP(1, ASN1_STRING, "openssl.asn1group");
   int          ret = 0;
-  switch (s->type) {
+  switch (ASN1_STRING_type(s)) {
   case V_ASN1_INTEGER: {
     ASN1_INTEGER *ai = CHECK_OBJECT(1, ASN1_INTEGER, "openssl.asn1_integer");
     BIGNUM       *bn = ASN1_INTEGER_to_BN(ai, NULL);
@@ -1040,7 +1127,10 @@ openssl_asn1group_get(lua_State *L)
 }
 
 /***
+encode ASN1 object to DER format
+
 @function i2d
+@treturn string DER encoded string
 */
 static int
 openssl_asn1group_i2d(lua_State *L)
@@ -1056,7 +1146,7 @@ openssl_asn1group_i2d(lua_State *L)
     break;                                                                                         \
   }
 
-  switch (s->type) {
+  switch (ASN1_STRING_type(s)) {
     /*
     P(ASN1_BOOLEAN);
     case V_ASN1_BOOLEAN:
@@ -1120,7 +1210,12 @@ openssl_asn1group_i2d(lua_State *L)
 }
 
 /***
+decode DER encoded string to ASN1 object
+
 @function d2i
+@tparam string der DER encoded string
+@treturn asn1group self on success
+@treturn boolean result false on failure
 */
 static int
 openssl_asn1group_d2i(lua_State *L)
@@ -1131,16 +1226,19 @@ openssl_asn1group_d2i(lua_State *L)
 
 #define P(T)                                                                                       \
   case V_##T: {                                                                                    \
-    T *v = (T *)s;                                                                                 \
-    v = d2i_##T(&v, &der, (long)len);                                                              \
+    T *v = d2i_##T(NULL, &der, (long)len);                                                         \
     if (v == NULL)                                                                                 \
       return openssl_pushresult(L, -1);                                                            \
-    else                                                                                           \
+    else {                                                                                         \
+      ASN1_STRING_free(s);                                                                         \
+      void **ud = lua_touserdata(L, 1);                                                            \
+      *ud = v;                                                                                     \
       lua_pushvalue(L, 1);                                                                         \
+    }                                                                                              \
     break;                                                                                         \
   }
 
-  switch (s->type) {
+  switch (ASN1_STRING_type(s)) {
     /*
     P(ASN1_BOOLEAN);
     case V_ASN1_BOOLEAN:
@@ -1204,7 +1302,7 @@ get type of asn1_string
 
 @function type
 @treturn string type of asn1_string
-@see new_string
+-- @see OpenSSL function: ASN1_STRING_new
 */
 static int
 openssl_asn1group_type(lua_State *L)
@@ -1224,7 +1322,7 @@ openssl_asn1group_type(lua_State *L)
 }
 
 /***
-get length two asn1_string
+get length of asn1_string
 
 @function length
 @treturn integer length of asn1_string
@@ -1276,11 +1374,17 @@ openssl_asn1group_data(lua_State *L)
 compare two asn1_string, if equals return true
 
 @function equals
-@tparam asn1_string another to compre
+@tparam openssl.asn1_string another to compre
 @treturn boolean true if equals
 @usage
   local obj = astr:dup()
   assert(obj==astr, "must equals")
+*/
+/***
+compare two ASN1 string objects for equality
+@function __eq
+@tparam openssl.asn1_string other ASN1 string object to compare with
+@treturn boolean true if objects are equal
 */
 static int
 openssl_asn1group_eq(lua_State *L)
@@ -1288,7 +1392,8 @@ openssl_asn1group_eq(lua_State *L)
   ASN1_STRING *s = CHECK_GROUP(1, ASN1_STRING, "openssl.asn1group");
   ASN1_STRING *ss = CHECK_GROUP(2, ASN1_STRING, "openssl.asn1group");
 
-  lua_pushboolean(L, (s->type == ss->type && ASN1_STRING_cmp(s, ss) == 0));
+  lua_pushboolean(L, (ASN1_STRING_type(s) == ASN1_STRING_type(ss)
+                      && ASN1_STRING_cmp(s, ss) == 0));
   return 1;
 }
 
@@ -1348,7 +1453,7 @@ openssl_asn1group_toprint(lua_State *L)
   unsigned long flags = luaL_optint(L, 2, 0);
   BIO          *out = BIO_new(BIO_s_mem());
   BUF_MEM      *mem;
-  switch (s->type) {
+  switch (ASN1_STRING_type(s)) {
   case V_ASN1_UTCTIME: {
     ASN1_TIME *a = (ASN1_TIME *)s;
     ASN1_TIME_print(out, a);
@@ -1392,16 +1497,21 @@ openssl_asn1group_toutf8(lua_State *L)
 duplicate a new asn1_string
 
 @function dup
-@treturn asn1_string clone for self
+@treturn openssl.asn1_string clone for self
 */
 static int
 openssl_asn1group_dup(lua_State *L)
 {
   ASN1_STRING *s = CHECK_GROUP(1, ASN1_STRING, "openssl.asn1group");
-  openssl_push_asn1(L, s, s->type);
+  openssl_push_asn1(L, s, ASN1_STRING_type(s));
   return 1;
 }
 
+/***
+check if asn1_time object is valid
+@function check
+@treturn boolean true if asn1_time is valid, false otherwise
+*/
 static int
 openssl_asn1time_check(lua_State *L)
 {
@@ -1410,6 +1520,14 @@ openssl_asn1time_check(lua_State *L)
   return openssl_pushresult(L, ret);
 }
 
+/***
+adjust asn1_time by specified offset
+@function adj
+@tparam number time base time as Unix timestamp
+@tparam[opt=0] number offset_day offset in days
+@tparam[opt=0] number offset_sec offset in seconds
+@treturn asn1_time adjusted asn1_time object (self)
+*/
 static int
 openssl_asn1time_adj(lua_State *L)
 {
@@ -1418,7 +1536,7 @@ openssl_asn1time_adj(lua_State *L)
   int        offset_day = luaL_optint(L, 3, 0);
   long       offset_sec = luaL_optlong(L, 4, 0);
 
-  switch (at->type) {
+  switch (ASN1_STRING_type(at)) {
   case V_ASN1_UTCTIME: {
     ASN1_UTCTIME *a = (ASN1_UTCTIME *)at;
     ASN1_UTCTIME_adj(a, t, offset_day, offset_sec);
@@ -1435,6 +1553,14 @@ openssl_asn1time_adj(lua_State *L)
 }
 
 #if !defined(LIBRESSL_VERSION_NUMBER)
+/***
+calculate difference between two asn1_time objects
+@function diff
+@tparam asn1_time to target time to compare with
+@treturn[1] number difference in days
+@treturn[1] number difference in seconds
+@treturn[2] nil when comparison fails
+*/
 static int
 openssl_asn1time_diff(lua_State *L)
 {
@@ -1442,7 +1568,7 @@ openssl_asn1time_diff(lua_State *L)
   ASN1_TIME *from = CHECK_OBJECT(1, ASN1_TIME, "openssl.asn1_time");
   ASN1_TIME *to = lua_isnoneornil(L, 2) ? NULL : CHECK_OBJECT(2, ASN1_TIME, "openssl.asn1_time");
 
-  luaL_argcheck(L, to->type == from->type, 2, "asn1_time with mismatched type");
+  luaL_argcheck(L, ASN1_STRING_type(to) == ASN1_STRING_type(from), 2, "asn1_time with mismatched type");
 
   ret = ASN1_TIME_diff(&day, &sec, from, to);
   if (ret == 1) {
@@ -1537,12 +1663,13 @@ openssl_push_asn1object(lua_State *L, const ASN1_OBJECT *obj)
 int
 openssl_push_asn1(lua_State *L, const ASN1_STRING *string, int type)
 {
-  if ((string->type & V_ASN1_GENERALIZEDTIME) == V_ASN1_GENERALIZEDTIME && type == V_ASN1_UTCTIME)
+  int strType = ASN1_STRING_type(string);
+  if ((strType & V_ASN1_GENERALIZEDTIME) == V_ASN1_GENERALIZEDTIME && type == V_ASN1_UTCTIME)
     type = V_ASN1_GENERALIZEDTIME;
-  else if ((string->type & V_ASN1_UTCTIME) == V_ASN1_UTCTIME && type == V_ASN1_GENERALIZEDTIME)
+  else if ((strType & V_ASN1_UTCTIME) == V_ASN1_UTCTIME && type == V_ASN1_GENERALIZEDTIME)
     type = V_ASN1_UTCTIME;
   else if (type == V_ASN1_UNDEF)
-    type = string->type;
+    type = strType;
 
   switch (type) {
   case V_ASN1_INTEGER: {

@@ -23,9 +23,9 @@ read x509_req from string or bio input
 @function read
 @tparam bio|string input input data
 @tparam[opt='auto'] string format support 'auto','pem','der'
-@treturn x509_req certificate sign request object
+@treturn openssl.x509_req certificate sign request object
 */
-static LUA_FUNCTION(openssl_csr_read)
+static int openssl_csr_read(lua_State *L)
 {
   BIO      *in = load_bio_object(L, 1);
   int       fmt = luaL_checkoption(L, 2, "auto", format);
@@ -56,13 +56,13 @@ object.
 @tparam[opt] x509_name subject subject name set to x509_req
 @tparam[opt] stack_of_x509_extension extensions add to x509_req
 @tparam[opt] stack_of_x509_attribute attributes add to x509_req
-@tparam[opt] evp_pkey pkey private key sign the x509_req, and set as public key
+@tparam[opt] openssl.evp_pkey pkey private key sign the x509_req, and set as public key
 @tparam[opt='sha1WithRSAEncryption'] evp_digest|string md_alg,  only used when pkey exist, and
 should fellow pkey
-@treturn x509_req certificate sign request object
-@see x509_req
+@treturn openssl.x509_req certificate sign request object
+-- @see openssl/x509.h:X509_REQ_
 */
-static LUA_FUNCTION(openssl_csr_new)
+static int openssl_csr_new(lua_State *L)
 {
   X509_REQ *csr = X509_REQ_new();
   int       i;
@@ -120,8 +120,8 @@ static int
 copy_extensions(X509 *x, X509_REQ *req, int override)
 {
   STACK_OF(X509_EXTENSION) *exts = NULL;
-  X509_EXTENSION *ext, *tmpext;
-  ASN1_OBJECT    *obj;
+  const X509_EXTENSION *ext, *tmpext;
+  const ASN1_OBJECT *obj;
   int             i, idx, ret = 0;
   if (!x || !req) return 1;
   exts = X509_REQ_get_extensions(req);
@@ -138,7 +138,7 @@ copy_extensions(X509 *x, X509_REQ *req, int override)
       do {
         tmpext = X509_get_ext(x, idx);
         X509_delete_ext(x, idx);
-        X509_EXTENSION_free(tmpext);
+        X509_EXTENSION_free((X509_EXTENSION*)tmpext);
         idx = X509_get_ext_by_OBJ(x, obj, -1);
       } while (idx != -1);
     }
@@ -157,7 +157,7 @@ static int
 X509_REQ_to_X509_ex(X509_REQ *r, int days, EVP_PKEY *pkey, const EVP_MD *md, X509 **x)
 {
   X509         *ret = NULL;
-  X509_NAME    *xn = NULL;
+  const X509_NAME *xn = NULL;
   EVP_PKEY     *pubkey = NULL;
   ASN1_TIME    *notBefore = NULL, *notAfter = NULL;
   ASN1_INTEGER *serial = NULL;
@@ -234,13 +234,13 @@ openssl.x509_req object
 /***
 convert x509_req to x509 object and sign it
 @function to_x509
-@tparam x509_req csr
-@tparam evp_pkey prikey
+@tparam openssl.x509_req csr
+@tparam openssl.evp_pkey prikey
 @tparam[opt=365] number days
 @tparam[opt='sha256'] evp_md|string md_alg default use sha256
-@treturn x509 object not signed
+@treturn openssl.x509 object not signed
 */
-static LUA_FUNCTION(openssl_csr_to_x509)
+static int openssl_csr_to_x509(lua_State *L)
 {
   X509_REQ     *csr = CHECK_OBJECT(1, X509_REQ, "openssl.x509_req");
   EVP_PKEY     *pkey = CHECK_OBJECT(2, EVP_PKEY, "openssl.evp_pkey");
@@ -268,7 +268,7 @@ export x509_req to string
 @tparam[opt='pem'] string format
 @treturn string
 */
-static LUA_FUNCTION(openssl_csr_export)
+static int openssl_csr_export(lua_State *L)
 {
   X509_REQ *csr = CHECK_OBJECT(1, X509_REQ, "openssl.x509_req");
   int       fmt = luaL_checkoption(L, 2, "pem", format);
@@ -296,7 +296,7 @@ get digest of x509_req
 @tparam[opt='sha256'] evp_md|string md_alg default use sha256
 @treturn string digest result
 */
-static LUA_FUNCTION(openssl_csr_digest)
+static int openssl_csr_digest(lua_State *L)
 {
   X509_REQ     *csr = CHECK_OBJECT(1, X509_REQ, "openssl.x509_req");
   unsigned char buf[EVP_MAX_MD_SIZE];
@@ -311,10 +311,10 @@ static LUA_FUNCTION(openssl_csr_digest)
 /***
 check x509_req with evp_pkey
 @function check
-@tparam evp_pkey pkey
+@tparam openssl.evp_pkey pkey
 @treturn boolean result true for check pass
 */
-static LUA_FUNCTION(openssl_csr_check)
+static int openssl_csr_check(lua_State *L)
 {
   X509_REQ *csr = CHECK_OBJECT(1, X509_REQ, "openssl.x509_req");
   EVP_PKEY *pkey = CHECK_OBJECT(2, EVP_PKEY, "openssl.evp_pkey");
@@ -325,9 +325,9 @@ static LUA_FUNCTION(openssl_csr_check)
 /***
 clone x509_req object
 @function dup
-@treturn x509_req object
+@treturn openssl.x509_req object
 */
-static LUA_FUNCTION(openssl_csr_dup)
+static int openssl_csr_dup(lua_State *L)
 {
   X509_REQ *csr = CHECK_OBJECT(1, X509_REQ, "openssl.x509_req");
   csr = X509_REQ_dup(csr);
@@ -340,7 +340,7 @@ verify x509_req signature
 @function verify
 @treturn boolean result true for verify pass
 */
-static LUA_FUNCTION(openssl_csr_verify)
+static int openssl_csr_verify(lua_State *L)
 {
   X509_REQ *csr = CHECK_OBJECT(1, X509_REQ, "openssl.x509_req");
   EVP_PKEY *self_key = X509_REQ_get_pubkey(csr);
@@ -373,11 +373,11 @@ set_csr_pubkey(X509_REQ *csr, EVP_PKEY *pkey)
 sign x509_req object
 
 @function sign
-@tparam evp_pkey pkey private key which to sign x509_req object
+@tparam openssl.evp_pkey pkey private key which to sign x509_req object
 @tparam number|string|evp_md md message digest alg used to sign
 @treturn boolean result true for suceess
 */
-static LUA_FUNCTION(openssl_csr_sign)
+static int openssl_csr_sign(lua_State *L)
 {
   X509_REQ *csr = CHECK_OBJECT(1, X509_REQ, "openssl.x509_req");
   EVP_PKEY *pubkey = X509_REQ_get_pubkey(csr);
@@ -412,9 +412,21 @@ static LUA_FUNCTION(openssl_csr_sign)
     /*
      * In the interests of compatibility, I'll make sure that the bit string
      * has a 'not-used bits' value of 0
+     *
+     * Instead of directly manipulating the internal flags (which is not allowed
+     * in OpenSSL 4.0+), we use ASN1_BIT_STRING_set_bit to properly manage the
+     * unused bits count. Setting the last bit explicitly ensures the unused
+     * bits count is calculated correctly by OpenSSL.
      */
-    sig->flags &= ~(ASN1_STRING_FLAG_BITS_LEFT | 0x07);
-    sig->flags |= ASN1_STRING_FLAG_BITS_LEFT;
+    if (siglen > 0) {
+        /* Set the last bit of the signature to its current value.
+         * This forces OpenSSL to recalculate and set the unused bits count
+         * to 0 (since the signature is byte-aligned). */
+        int last_bit = (siglen * 8) - 1;
+        int bit_value = (sigdata[siglen - 1] & 1) ? 1 : 0;
+        ASN1_BIT_STRING_set_bit(sig, last_bit, bit_value);
+    }
+
     lua_pushboolean(L, 1);
     return 1;
   } else {
@@ -439,10 +451,10 @@ parse x509_req object as table
 @tparam[opt=true] shortname default will use short object name
 @treturn table result
 */
-static LUA_FUNCTION(openssl_csr_parse)
+static int openssl_csr_parse(lua_State *L)
 {
   X509_REQ  *csr = CHECK_OBJECT(1, X509_REQ, "openssl.x509_req");
-  X509_NAME *subject = X509_REQ_get_subject_name(csr);
+  const X509_NAME *subject = X509_REQ_get_subject_name(csr);
   STACK_OF(X509_EXTENSION) *exts = X509_REQ_get_extensions(csr);
 
   lua_newtable(L);
@@ -457,7 +469,7 @@ static LUA_FUNCTION(openssl_csr_parse)
       PUSH_OBJECT(alg, "openssl.x509_algor");
       lua_setfield(L, -2, "sig_alg");
     }
-    if (sig->length) {
+    if (sig) {
       openssl_push_asn1(L, sig, V_ASN1_BIT_STRING);
       lua_setfield(L, -2, "signature");
     }
@@ -511,7 +523,7 @@ static LUA_FUNCTION(openssl_csr_parse)
   return 1;
 }
 
-static LUA_FUNCTION(openssl_csr_free)
+static int openssl_csr_free(lua_State *L)
 {
   X509_REQ *csr = CHECK_OBJECT(1, X509_REQ, "openssl.x509_req");
   X509_REQ_free(csr);
@@ -521,16 +533,16 @@ static LUA_FUNCTION(openssl_csr_free)
 /***
 get public key
 @function public
-@treturn evp_pkey public key
+@treturn openssl.evp_pkey public key
 */
 
 /***
 set public key
 @function public
-@tparam evp_pkey pubkey public key set to x509_req
+@tparam openssl.evp_pkey pubkey public key set to x509_req
 @treturn boolean result
 */
-static LUA_FUNCTION(openssl_csr_public)
+static int openssl_csr_public(lua_State *L)
 {
   X509_REQ *csr = CHECK_OBJECT(1, X509_REQ, "openssl.x509_req");
   if (lua_isnone(L, 2)) {
@@ -555,7 +567,7 @@ set version key
 @tparam integer version
 @treturn boolean result
 */
-static LUA_FUNCTION(openssl_csr_version)
+static int openssl_csr_version(lua_State *L)
 {
   X509_REQ *csr = CHECK_OBJECT(1, X509_REQ, "openssl.x509_req");
   if (lua_isnone(L, 2)) {
@@ -576,16 +588,16 @@ get subject x509_name object
 /***
 set subject x509_name object
 @function subject
-@tparam x509_name subject
+@tparam openssl.x509_name subject
 @treturn boolean result
 */
-static LUA_FUNCTION(openssl_csr_subject)
+static int openssl_csr_subject(lua_State *L)
 {
   X509_REQ *csr = CHECK_OBJECT(1, X509_REQ, "openssl.x509_req");
   int       ret = 0;
 
   if (lua_isnone(L, 2)) {
-    X509_NAME *xn = X509_REQ_get_subject_name(csr);
+    const X509_NAME *xn = X509_REQ_get_subject_name(csr);
     if (xn) {
       openssl_push_xname_asobject(L, xn);
       ret = 1;
@@ -601,7 +613,7 @@ static LUA_FUNCTION(openssl_csr_subject)
 /***
 get extensions of x509_req object
 @function extensions
-@tparam[opt=false] boolean asobject, true for return as stack_of_x509_extension or as table
+@tparam[opt=false] boolean asobject true for return as stack_of_x509_extension or as table
 @treturn stack_of_x509_extension object when param set true
 @treturn table contain all x509_extension when param set false or nothing
 */
@@ -611,7 +623,7 @@ set extension of x509_req object
 @tparam stack_of_x509_extension extensions
 @treturn boolean result true for success
 */
-static LUA_FUNCTION(openssl_csr_extensions)
+static int openssl_csr_extensions(lua_State *L)
 {
   X509_REQ *csr = CHECK_OBJECT(1, X509_REQ, "openssl.x509_req");
   int       ret = 0;
@@ -636,7 +648,7 @@ static LUA_FUNCTION(openssl_csr_extensions)
 remove attribute object from location
 @function attribute
 @tparam integer location
-@tparam nil nil, nil not none
+@tparam nil nil nil not none
 @treturn x509_attribute attribute removed
 */
 /***
@@ -651,7 +663,7 @@ add attribute to x509_req object
 @tparam x509_attribute attribute attribute to add
 @treturn boolean result
 */
-static LUA_FUNCTION(openssl_csr_attribute)
+static int openssl_csr_attribute(lua_State *L)
 {
   X509_REQ *csr = CHECK_OBJECT(1, X509_REQ, "openssl.x509_req");
   int       ret = 0;
@@ -701,7 +713,7 @@ get total attribute count in x509_req object
 @function attr_count
 @treturn integer
 */
-static LUA_FUNCTION(openssl_csr_attr_count)
+static int openssl_csr_attr_count(lua_State *L)
 {
   X509_REQ *csr = CHECK_OBJECT(1, X509_REQ, "openssl.x509_req");
   lua_pushinteger(L, X509_REQ_get_attr_count(csr));

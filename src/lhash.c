@@ -1,9 +1,21 @@
-/*=========================================================================*\
-* lhash.c
-* openssl lhash object for lua-openssl binding
-*
-* Author:  george zhao <zhaozg(at)gmail.com>
-\*=========================================================================*/
+/*
+ * lhash.c
+ * openssl lhash object for lua-openssl binding
+ *
+ * Author:  george zhao <zhaozg(at)gmail.com>
+ */
+
+/***
+lhash module for lua-openssl binding
+
+LHASH is OpenSSL's implementation of a hash table. It provides a
+generic hash table that can be used to store arbitrary data using
+string keys. This module provides Lua bindings for the LHASH functionality.
+
+@module lhash
+@usage
+  lhash = require('openssl').lhash
+*/
 #include <openssl/conf.h>
 
 #include "openssl.h"
@@ -32,7 +44,13 @@ static void table2data(lua_State*L, int idx, BIO* bio)
 #endif
 
 #if !defined(LIBRESSL_VERSION_NUMBER) || LIBRESSL_VERSION_NUMBER < 0x30900000L
-static LUA_FUNCTION(openssl_lhash_read)
+/***
+read configuration hash from BIO object
+@function read
+@tparam openssl.bio bio BIO object to read from
+@treturn lhash configuration hash object
+*/
+static int openssl_lhash_read(lua_State *L)
 {
   long   eline = -1;
   BIO   *bio = load_bio_object(L, 1);
@@ -47,7 +65,13 @@ static LUA_FUNCTION(openssl_lhash_read)
   }
 }
 
-static LUA_FUNCTION(openssl_lhash_load)
+/***
+load configuration hash from file
+@function load
+@tparam string conf_file path to configuration file
+@treturn lhash configuration hash object
+*/
+static int openssl_lhash_load(lua_State *L)
 {
   long        eline = -1;
   const char *conf = luaL_checkstring(L, 1);
@@ -64,14 +88,21 @@ static LUA_FUNCTION(openssl_lhash_load)
   return 1;
 }
 
-LUA_FUNCTION(openssl_lhash_gc)
+int openssl_lhash_gc(lua_State *L)
 {
   LHASH *lhash = CHECK_OBJECT(1, LHASH, "openssl.lhash");
   CONF_free(lhash);
   return 0;
 }
 
-LUA_FUNCTION(openssl_lhash_get_number)
+/***
+get number value from LHASH configuration
+@function get_number
+@tparam string group configuration group name
+@tparam string name configuration key name
+@treturn number configuration value as number
+*/
+int openssl_lhash_get_number(lua_State *L)
 {
   LHASH      *lhash = CHECK_OBJECT(1, LHASH, "openssl.lhash");
   const char *group = luaL_checkstring(L, 2);
@@ -80,7 +111,14 @@ LUA_FUNCTION(openssl_lhash_get_number)
   return 1;
 }
 
-LUA_FUNCTION(openssl_lhash_get_string)
+/***
+get string value from LHASH configuration
+@function get_string
+@tparam string group configuration group name
+@tparam string name configuration key name
+@treturn string configuration value as string
+*/
+int openssl_lhash_get_string(lua_State *L)
 {
   LHASH      *lhash = CHECK_OBJECT(1, LHASH, "openssl.lhash");
   const char *group = luaL_checkstring(L, 2);
@@ -128,7 +166,12 @@ static IMPLEMENT_LHASH_DOALL_ARG_FN(dump_value, CONF_VALUE, lua_State)
   lh_doall_arg(CHECKED_LHASH_OF(type, lh), fn, CHECKED_PTR_OF(arg_type, arg))
 #endif
 
-static LUA_FUNCTION(openssl_lhash_parse)
+/***
+parse LHASH configuration to table
+@function parse
+@treturn table configuration data as key-value pairs
+*/
+static int openssl_lhash_parse(lua_State *L)
 {
   LHASH *lhash = CHECK_OBJECT(1, LHASH, "openssl.lhash");
 
@@ -144,7 +187,12 @@ static LUA_FUNCTION(openssl_lhash_parse)
   return 1;
 }
 
-static LUA_FUNCTION(openssl_lhash_export)
+/***
+export LHASH configuration to string
+@function export
+@treturn string configuration data in OpenSSL config format
+*/
+static int openssl_lhash_export(lua_State *L)
 {
   LHASH *lhash = CHECK_OBJECT(1, LHASH, "openssl.lhash");
 

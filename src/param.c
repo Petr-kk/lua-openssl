@@ -1,3 +1,14 @@
+/***
+param module for OpenSSL 3.x parameter handling
+
+This module provides functionality for handling OpenSSL 3.x parameters
+used in cryptographic operations. It supports various parameter types
+including integers, strings, and big numbers.
+
+@module param
+@usage
+  param = require('openssl').param
+*/
 #include "lua.h"
 #include "openssl.h"
 #include "private.h"
@@ -72,6 +83,36 @@ static struct param_info kdf_params[] = {
 
   { OSSL_KDF_PARAM_SIZE,                OSSL_PARAM_UNSIGNED_INTEGER, PARAM_T_SIZE_T },
 
+/* Argon2 parameters (OpenSSL 3.2+) */
+#if defined(OSSL_KDF_PARAM_ARGON2_AD)
+  { OSSL_KDF_PARAM_ARGON2_AD,           OSSL_PARAM_OCTET_STRING,     0              },
+#endif
+#if defined(OSSL_KDF_PARAM_ARGON2_LANES)
+  { OSSL_KDF_PARAM_ARGON2_LANES,        OSSL_PARAM_UNSIGNED_INTEGER, PARAM_T_UINT32 },
+#endif
+#if defined(OSSL_KDF_PARAM_ARGON2_MEMCOST)
+  { OSSL_KDF_PARAM_ARGON2_MEMCOST,      OSSL_PARAM_UNSIGNED_INTEGER, PARAM_T_UINT32 },
+#endif
+#if defined(OSSL_KDF_PARAM_ARGON2_VERSION)
+  { OSSL_KDF_PARAM_ARGON2_VERSION,      OSSL_PARAM_UNSIGNED_INTEGER, PARAM_T_UINT32 },
+#endif
+#if defined(OSSL_KDF_PARAM_THREADS)
+  { OSSL_KDF_PARAM_THREADS,             OSSL_PARAM_UNSIGNED_INTEGER, PARAM_T_UINT32 },
+#endif
+
+  { NULL,                               0,                           0              }
+};
+
+/* RSA key parameters */
+static struct param_info rsa_params[] = {
+  { OSSL_PKEY_PARAM_RSA_N,              OSSL_PARAM_UNSIGNED_INTEGER, PARAM_T_BN     },
+  { OSSL_PKEY_PARAM_RSA_E,              OSSL_PARAM_UNSIGNED_INTEGER, PARAM_T_BN     },
+  { OSSL_PKEY_PARAM_RSA_D,              OSSL_PARAM_UNSIGNED_INTEGER, PARAM_T_BN     },
+  { OSSL_PKEY_PARAM_RSA_FACTOR1,        OSSL_PARAM_UNSIGNED_INTEGER, PARAM_T_BN     },
+  { OSSL_PKEY_PARAM_RSA_FACTOR2,        OSSL_PARAM_UNSIGNED_INTEGER, PARAM_T_BN     },
+  { OSSL_PKEY_PARAM_RSA_EXPONENT1,      OSSL_PARAM_UNSIGNED_INTEGER, PARAM_T_BN     },
+  { OSSL_PKEY_PARAM_RSA_EXPONENT2,      OSSL_PARAM_UNSIGNED_INTEGER, PARAM_T_BN     },
+  { OSSL_PKEY_PARAM_RSA_COEFFICIENT1,   OSSL_PARAM_UNSIGNED_INTEGER, PARAM_T_BN     },
   { NULL,                               0,                           0              }
 };
 
@@ -80,6 +121,7 @@ get_param_type(const char *name, PARAM_NUMBER_TYPE *nt)
 {
   int i;
 
+  /* Try KDF parameters first */
   for (i = 0; i < sizeof(kdf_params) / sizeof(kdf_params[0]); i++) {
     struct param_info *p = &kdf_params[i];
     if (p->name && strcmp(p->name, name) == 0) {
@@ -87,6 +129,16 @@ get_param_type(const char *name, PARAM_NUMBER_TYPE *nt)
       return p->data_type;
     }
   }
+
+  /* Try RSA parameters */
+  for (i = 0; i < sizeof(rsa_params) / sizeof(rsa_params[0]); i++) {
+    struct param_info *p = &rsa_params[i];
+    if (p->name && strcmp(p->name, name) == 0) {
+      *nt = p->number_type;
+      return p->data_type;
+    }
+  }
+
   return 0;
 }
 
@@ -271,11 +323,74 @@ luaopen_param(lua_State *L)
 
   lua_newtable(L);
 
+  /* Export KDF parameters */
   lua_pushliteral(L, "kdf");
   lua_newtable(L);
 
   for (i = 0; i < sizeof(kdf_params) / sizeof(kdf_params[0]); i++) {
     struct param_info *p = &kdf_params[i];
+    if (p->name) {
+      lua_pushstring(L, p->name);
+      lua_newtable(L);
+      lua_pushliteral(L, "type");
+      lua_pushinteger(L, p->data_type);
+      lua_rawset(L, -3);
+      if (p->number_type) {
+        lua_pushliteral(L, "number_type");
+        switch ((int)p->number_type) {
+        case PARAM_T_INT:
+          lua_pushliteral(L, "int");
+          break;
+        case PARAM_T_UINT:
+          lua_pushliteral(L, "unsinged int");
+          break;
+        case PARAM_T_LONG:
+          lua_pushliteral(L, "long");
+          break;
+        case PARAM_T_ULONG:
+          lua_pushliteral(L, "unsinged long");
+          break;
+        case PARAM_T_INT32:
+          lua_pushliteral(L, "int32");
+          break;
+        case PARAM_T_UINT32:
+          lua_pushliteral(L, "uint32");
+          break;
+        case PARAM_T_INT64:
+          lua_pushliteral(L, "int64");
+          break;
+        case PARAM_T_UINT64:
+          lua_pushliteral(L, "uint64");
+          break;
+        case PARAM_T_SIZE_T:
+          lua_pushliteral(L, "size_t");
+          break;
+        case PARAM_T_TIME_T:
+          lua_pushliteral(L, "time_t");
+          break;
+        case PARAM_T_BN:
+          lua_pushliteral(L, "BIGNUM");
+          break;
+        case PARAM_T_DOUBLE:
+          lua_pushliteral(L, "double");
+          break;
+        default:
+          lua_pushliteral(L, "unknown");
+        }
+        lua_rawset(L, -3);
+      }
+      lua_rawset(L, -3);
+    }
+  }
+
+  lua_rawset(L, -3);
+
+  /* Export RSA parameters */
+  lua_pushliteral(L, "rsa");
+  lua_newtable(L);
+
+  for (i = 0; i < sizeof(rsa_params) / sizeof(rsa_params[0]); i++) {
+    struct param_info *p = &rsa_params[i];
     if (p->name) {
       lua_pushstring(L, p->name);
       lua_newtable(L);

@@ -45,22 +45,28 @@ endif
 
 #OpenSSL auto detect
 OPENSSL_CFLAGS	?= $(shell $(PKG_CONFIG) openssl --cflags)
-ifeq (${OPENSSL_STATIC},)
-OPENSSL_LIBS	?= $(shell $(PKG_CONFIG) openssl --static --libs)
+ifdef OPENSSL_STATIC
+  # User requested static linking: use pkg-config --static
+  OPENSSL_LIBS	?= $(shell $(PKG_CONFIG) openssl --static --libs)
 else
-OPENSSL_LIBDIR  ?= $(shell $(PKG_CONFIG) openssl --variable=libdir)
-OPENSSL_LIBS    ?= $(OPENSSL_LIBDIR)/libcrypto.a $(OPENSSL_LIBDIR)/libssl.a
+  # Default: dynamic linking via pkg-config
+  OPENSSL_LIBS	?= $(shell $(PKG_CONFIG) openssl --libs)
 endif
 
-TARGET  = $(MAKECMDGOALS)
-ifeq (coveralls, ${TARGET})
+# Detect build target
+BUILD_TARGET := $(firstword $(MAKECMDGOALS))
+ifeq ($(BUILD_TARGET),)
+  BUILD_TARGET := all
+endif
+
+ifeq (coveralls, $(BUILD_TARGET))
   CFLAGS	+=-g -fprofile-arcs -ftest-coverage
   LDFLAGS	+=-g -fprofile-arcs
 endif
 
 # asan {{{
 
-ifeq (asan, ${TARGET})
+ifeq (asan, $(BUILD_TARGET))
 ifneq (, $(findstring apple, $(SYS)))
   ASAN_LIB      ?= $(shell dirname $(shell dirname $(shell clang -print-libgcc-file-name)))/darwin/libclang_rt.asan_osx_dynamic.dylib
   LDFLAGS       +=-g -fsanitize=address
@@ -78,7 +84,7 @@ endif
 
 # tsan {{{
 
-ifeq (tsan, ${TARGET})
+ifeq (tsan, $(BUILD_TARGET))
 ifneq (, $(findstring apple, $(SYS)))
   ASAN_LIB      ?= $(shell dirname $(shell dirname $(shell clang -print-libgcc-file-name)))/darwin/libclang_rt.tsan_osx_dynamic.dylib
   LDFLAGS       +=-g -fsanitize=thread
@@ -95,12 +101,12 @@ endif
 
 # tsan }}}
 
-ifeq (debug, ${TARGET})
+ifeq (debug, $(BUILD_TARGET))
   CFLAGS	+=-g -Og
   LDFLAGS       +=-g -Og
 endif
 
-ifeq (valgrind, ${TARGET})
+ifeq (valgrind, $(BUILD_TARGET))
   CFLAGS	+=-g -O0
   LDFLAGS	+=-g -O0
 endif
@@ -113,10 +119,9 @@ endif
 
 ifneq (, $(findstring apple, $(SYS)))
   # Do darwin things
+  export MACOSX_DEPLOYMENT_TARGET := 10.12
   CFLAGS	+= -fPIC
   LDFLAGS	+= -fPIC -Wl,-undefined,dynamic_lookup -ldl
-  MACOSX_DEPLOYMENT_TARGET="10.12"
-  CC		:= MACOSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET} $(CC)
 endif
 
 ifneq (, $(findstring mingw, $(SYS)))
@@ -151,13 +156,13 @@ CFLAGS		+= $(WARN_MIN) -Ideps -Ideps/lua-compat/c-api -Ideps/auxiliar
 
 OBJS=src/asn1.o deps/auxiliar/auxiliar.o src/bio.o src/cipher.o src/cms.o src/compat.o \
      src/crl.o src/csr.o src/dh.o src/digest.o src/dsa.o src/ec.o src/engine.o         \
-     src/hmac.o src/lbn.o src/lhash.o src/misc.o src/ocsp.o src/openssl.o src/ots.o    \
-     src/pkcs12.o src/pkcs7.o src/pkey.o src/rsa.o src/ssl.o src/th-lock.o src/util.o  \
-     src/x509.o src/xattrs.o src/xexts.o src/xname.o src/xstore.o src/xalgor.o         \
-     src/param.o src/kdf.o                                                             \
-     src/callback.o src/srp.o src/mac.o deps/auxiliar/subsidiar.o
+     src/hmac.o src/lbn.o src/lhash.o src/misc.o src/ocsp.o src/openssl.o  \
+     src/ots.o src/pkcs12.o src/pkcs7.o src/pkey.o src/provider.o src/rsa.o src/ssl.o  \
+     src/th-lock.o src/util.o src/x509.o src/xattrs.o src/xexts.o src/xname.o          \
+     src/xstore.o src/xalgor.o src/param.o src/kdf.o                                   \
+     src/callback.o src/srp.o src/mac.o src/ssl_pqc.o deps/auxiliar/subsidiar.o
 
-.PHONY: all install test info doc coveralls asan
+.PHONY: all install test info doc coveralls asan debug valgrind tsan clean check
 
 .c.o:
 	$(CC) $(CFLAGS) -c -o $@ $?
@@ -171,11 +176,16 @@ $T.so: lib$T.a
 lib$T.a: $(OBJS)
 	$(AR) rcs $@ $?
 
+src/pkey.o: src/pkey.c src/pkey/core.c src/pkey/engine.c src/pkey/read.c src/pkey/sign.c \
+            src/pkey/derive.c src/pkey/new.c src/pkey/seal.c src/pkey/sm2.c src/pkey/kem.c
+	$(CC) $(CFLAGS) -c -o $@ src/pkey.c
+
 install: all
 	mkdir -p $(LUA_LIBDIR)
 	cp $T.so $(LUA_LIBDIR)
+
 doc:
-	ldoc src -d doc
+	ldoc src -d doc -s .ldoc.css
 
 info:
 	@echo "Target system: "$(SYS)
@@ -187,6 +197,9 @@ test:	all
 	cd test && LUA_CPATH=$(shell pwd)/?.so $(shell which $(LUA)) test.lua -v && cd ..
 
 debug: all
+
+check:
+	luajit .github/shell/analyze_ldoc.lua src
 
 coveralls: test
 ifeq ($(CI),)
@@ -233,6 +246,7 @@ ifneq (, $(findstring linux, $(SYS)))
 endif
 
 clean:
-	rm -rf $T.* lib$T.a $(OBJS) src/*.g*
+	rm -rf $T.* lib$T.a $(OBJS) src/*.g* doc/
+	$(RM) -r test/__cache
 
 # vim: ts=8 sw=8 noet

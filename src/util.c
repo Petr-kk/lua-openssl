@@ -1,3 +1,10 @@
+/***
+util module with internal utility functions for lua-openssl
+
+This module provides internal utility functions for value management,
+memory handling, and registry operations used throughout the
+lua-openssl library.
+*/
 #include "private.h"
 
 int

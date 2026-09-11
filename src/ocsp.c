@@ -93,7 +93,7 @@ openssl_ocsp_request_new(lua_State *L)
 read ocsp_request object from string or bio data
 @function request_read
 @tparam string|bio input
-@tparam[opt=false] boolean pem, true for PEM, false for DER
+@tparam[opt=false] boolean pem true for PEM, false for DER
 @treturn openssl.ocsp_request
 */
 static int
@@ -134,9 +134,8 @@ openssl_ocsp_request_read(lua_State *L)
 
 /***
 read openssl.ocsp_response object from string or bio object
-@function read
-@tparam string|bio content
-@tparam[opt=false] boolean pem, true for PEM, false for DER
+@function response_read
+@tparam string|bio content input data to read
 @treturn openssl.ocsp_response
 */
 static int
@@ -368,11 +367,11 @@ openssl_ocsp_request_is_signed(lua_State *L)
 /***
 sign ocsp_request object
 @function sign
-@tparam x509 signer
-@tparam evp_pkey pkey
-@param[opt] others certificates in ocsp_request
+@tparam openssl.x509 signer
+@tparam openssl.evp_pkey pkey
+@tparam[opt] table others certificates in ocsp_request
 @tparam[opt=0] integer flags
-@param[opt='sha256'] digest
+@tparam[opt='sha256'] openssl.evp_digest digest_alg
 @treturn boolean
 */
 static int

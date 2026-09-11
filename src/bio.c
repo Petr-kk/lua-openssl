@@ -40,28 +40,33 @@ static const char* sMethods[] = {
   "buffer",
   NULL
 };
-
-static LUA_FUNCTION(openssl_bio_new) {
-
-const char* f = luaL_checkstring(L,1);
-const char* m = luaL_optstring(L,2,"r");
-BIO *bio = BIO_new_file(f,m);
-BIO_f_base64()
-if(!bio)
-luaL_error(L, "error opening the file(%s) for mode (%s)", f, m);
-PUSH_OBJECT(bio,"openssl.bio");
-return 1;
-}
 */
 
 /***
-make string as bio object
+create memory BIO object
+
+Creates a memory BIO that can be used for input or output operations.
+If a string is provided, it will be written to the BIO as initial data.
+If a number is provided, it sets the buffer size.
 
 @function mem
-@tparam[opt=nil] string data, it will be memory buffer data
-@treturn bio it can be input or output object
+@tparam[opt] string|number data optional initial data string or buffer size
+@treturn[1] openssl.bio memory BIO object on success
+@treturn[2] nil on error
+@treturn[2] string error message
+-- @see OpenSSL function: BIO_new_mem_buf
+-- @see OpenSSL function: BIO_s_mem
+@usage
+  -- Create empty memory BIO
+  local bio1 = bio.mem()
+
+  -- Create memory BIO with initial data
+  local bio2 = bio.mem("initial data")
+
+  -- Create memory BIO with specific buffer size
+  local bio3 = bio.mem(4096)  -- 4KB buffer
 */
-static LUA_FUNCTION(openssl_bio_new_mem)
+static int openssl_bio_new_mem(lua_State *L)
 {
   size_t l = 0;
   BIO   *bio = BIO_new(BIO_s_mem());
@@ -82,7 +87,15 @@ static LUA_FUNCTION(openssl_bio_new_mem)
   return 1;
 }
 
-static LUA_FUNCTION(openssl_bio_new_pair)
+/***
+create a pair of connected BIOs
+@function pair
+@tparam[opt=0] number buffer1 buffer size for first BIO
+@tparam[opt=buffer1] number buffer2 buffer size for second BIO
+@treturn bio first BIO of the pair
+@treturn bio second BIO of the pair
+*/
+static int openssl_bio_new_pair(lua_State *L)
 {
   size_t b1 = luaL_optint(L, 1, 0);
   size_t b2 = luaL_optint(L, 2, b1);
@@ -98,14 +111,25 @@ static LUA_FUNCTION(openssl_bio_new_pair)
   return ret > 0 ? ret : openssl_pushresult(L, ret);
 }
 
-static LUA_FUNCTION(openssl_bio_destroy_pair)
+/***
+destroy a BIO pair connection
+@function destroy_pair
+@tparam bio bio BIO object that is part of a pair
+@treturn boolean true on success, false on failure
+*/
+static int openssl_bio_destroy_pair(lua_State *L)
 {
   BIO *bio = CHECK_OBJECT(1, BIO, "openssl.bio");
   int  ret = BIO_destroy_bio_pair(bio);
   return openssl_pushresult(L, ret);
 }
 
-static LUA_FUNCTION(openssl_bio_new_null)
+/***
+create a null BIO that discards all data written to it
+@function null
+@treturn bio null BIO object
+*/
+static int openssl_bio_new_null(lua_State *L)
 {
   BIO *bio = BIO_new(BIO_s_null());
 
@@ -121,7 +145,7 @@ make tcp bio from socket fd
 @tparam[opt='noclose'] flag support 'close' or 'noclose' when close or gc
 @treturn bio
 */
-static LUA_FUNCTION(openssl_bio_new_socket)
+static int openssl_bio_new_socket(lua_State *L)
 {
   int  s = luaL_checkint(L, 1);
   int  closeflag = luaL_optinteger(L, 2, 0);
@@ -139,7 +163,7 @@ make dgram bio from socket fd
 @tparam[opt='noclose'] flag support 'close' or 'noclose' when close or gc
 @treturn bio
 */
-static LUA_FUNCTION(openssl_bio_new_dgram)
+static int openssl_bio_new_dgram(lua_State *L)
 {
   int  s = luaL_checkint(L, 1);
   int  closeflag = luaL_optinteger(L, 2, 0);
@@ -156,7 +180,7 @@ make socket or file bio with fd
 @tparam[opt='noclose'] flag support 'close' or 'noclose' when close or gc
 @treturn bio
 */
-static LUA_FUNCTION(openssl_bio_new_fd)
+static int openssl_bio_new_fd(lua_State *L)
 {
   int  fd = luaL_checkint(L, 1);
   int  closeflag = luaL_optinteger(L, 2, 0);
@@ -173,7 +197,7 @@ make file object with file name or path
 @tparam[opt='r'] string mode
 @treturn bio
 */
-static LUA_FUNCTION(openssl_bio_new_file)
+static int openssl_bio_new_file(lua_State *L)
 {
   const char *f = luaL_checkstring(L, 1);
   const char *m = luaL_optstring(L, 2, "r");
@@ -191,7 +215,7 @@ make tcp listen socket
 @tparam string host_port address like 'host:port'
 @treturn bio
 */
-static LUA_FUNCTION(openssl_bio_new_accept)
+static int openssl_bio_new_accept(lua_State *L)
 {
   const char *port = lua_tostring(L, 1);
   BIO        *b = BIO_new_accept((char *)port);
@@ -203,17 +227,29 @@ static LUA_FUNCTION(openssl_bio_new_accept)
 /***
 make tcp client socket
 @function connect
-@tparam string host_addr addrees like 'host:port'
-@tparam[opt=true] boolean connect default connect immediately
-@treturn bio
+@tparam string host_addr address like 'host:port' (e.g., 'kkhub.com:443')
+@tparam[opt=true] boolean connect default connect immediately, false to defer connection
+@treturn bio TCP client BIO object
 */
 
 /***
-make tcp client socket
+make tcp client socket with address table
 @function connect
-@tparam address table with hostname, ip, port filed
-@tparam[opt=true] boolean connect default connect immediately
-@treturn bio
+@tparam table address table with hostname, ip, port fields
+@tparam[opt=true] boolean connect default connect immediately, false to defer connection
+@treturn bio TCP client BIO object
+@usage
+  -- String format
+  local cli = bio.connect("kkhub.com:443")
+
+  -- Table format
+  local cli = bio.connect({
+    hostname = "kkhub.com",
+    port = "12345"
+  })
+
+  -- Deferred connection
+  local cli = bio.connect("host:port", false)
 */
 static int
 openssl_bio_new_connect(lua_State *L)
@@ -258,34 +294,37 @@ openssl_bio_new_connect(lua_State *L)
 make base64 or buffer bio, which can append to an io BIO object
 @function filter
 @tparam string mode support 'base64' or 'buffer'
-@treturn bio
+@treturn bio filter BIO object
 */
+
 /***
 make digest bio, which can append to an io BIO object
 @function filter
-@tparam string mode must be 'digest'
-@tparam evp_md|string md_alg
-@treturn bio
+@tparam string mode must be 'md' for message digest
+@tparam evp_md|string md_alg message digest algorithm name (e.g., 'sha1', 'sha256')
+@treturn bio filter BIO object for message digest operations
 */
+
 /***
 make ssl bio
 @function filter
 @tparam string mode must be 'ssl'
-@tparam ssl s
-@tparam[opt='noclose'] flag support 'close' or 'noclose' when close or gc
-@treturn bio
+@tparam ssl s SSL object to attach
+@tparam[opt='noclose'] string flag support 'close' or 'noclose' when close or gc
+@treturn bio SSL filter BIO object
 */
 
 /***
 make cipher filter bio object
 @function filter
 @tparam string mode must be 'cipher'
-@tparam string key
-@tparam string iv
-@tparam[opt=true] boolean encrypt
-@treturn bio
+@tparam string|evp_cipher alg cipher algorithm name (e.g., 'aes-128-ecb')
+@tparam string key encryption/decryption key
+@tparam string iv initialization vector
+@tparam[opt=true] boolean encrypt true for encryption, false for decryption
+@treturn bio cipher filter BIO object
 */
-static LUA_FUNCTION(openssl_bio_new_filter)
+static int openssl_bio_new_filter(lua_State *L)
 {
   /* 0         1        2      3      4    5 */
   static const char *sType[] = { "base64", "buffer", "cipher", "md", "ssl", NULL };
@@ -346,7 +385,7 @@ read data from bio object
 @tparam number len
 @treturn string string length may be less than param len
 */
-static LUA_FUNCTION(openssl_bio_read)
+static int openssl_bio_read(lua_State *L)
 {
   BIO  *bio = CHECK_OBJECT(1, BIO, "openssl.bio");
   int   len = luaL_optint(L, 2, BIO_pending(bio));
@@ -383,7 +422,7 @@ get line from bio object
 @tparam[opt=256] number max line len
 @treturn string string length may be less than param len
 */
-static LUA_FUNCTION(openssl_bio_gets)
+static int openssl_bio_gets(lua_State *L)
 {
   BIO  *bio = CHECK_OBJECT(1, BIO, "openssl.bio");
   int   len = luaL_optint(L, 2, BIO_pending(bio));
@@ -415,7 +454,7 @@ write data to bio object
 @tparam string data
 @treturn number length success write
 */
-static LUA_FUNCTION(openssl_bio_write)
+static int openssl_bio_write(lua_State *L)
 {
   BIO        *bio = CHECK_OBJECT(1, BIO, "openssl.bio");
   size_t      size = 0;
@@ -445,7 +484,7 @@ put line to bio object
 @tparam string data
 @treturn number length success write
 */
-static LUA_FUNCTION(openssl_bio_puts)
+static int openssl_bio_puts(lua_State *L)
 {
   BIO        *bio = CHECK_OBJECT(1, BIO, "openssl.bio");
   const char *s = luaL_checkstring(L, 2);
@@ -472,7 +511,7 @@ flush buffer of bio object
 @function flush
 @treturn boolean true for success, others for fail
 */
-static LUA_FUNCTION(openssl_bio_flush)
+static int openssl_bio_flush(lua_State *L)
 {
   int  ret;
   BIO *bio = CHECK_OBJECT(1, BIO, "openssl.bio");
@@ -483,7 +522,13 @@ static LUA_FUNCTION(openssl_bio_flush)
   return 1;
 }
 
-static LUA_FUNCTION(openssl_bio_free)
+/***
+free BIO object and associated resources
+@function free
+@tparam[opt=false] boolean free_all if true, free entire BIO chain; if false, free only this BIO
+@treturn number always returns 0
+*/
+static int openssl_bio_free(lua_State *L)
 {
   int  flags;
   BIO *bio = CHECK_OBJECT(1, BIO, "openssl.bio");
@@ -505,7 +550,7 @@ get type of bio
 @function type
 @treturn string
 */
-static LUA_FUNCTION(openssl_bio_type)
+static int openssl_bio_type(lua_State *L)
 {
   BIO *bio = CHECK_OBJECT(1, BIO, "openssl.bio");
   luaL_argcheck(L, bio, 1, "Already closed");
@@ -520,7 +565,7 @@ set nonblock for bio object
 @tparam boolean nonblock
 @treturn boolean result, true for success, others for fail
 */
-static LUA_FUNCTION(openssl_bio_nbio)
+static int openssl_bio_nbio(lua_State *L)
 {
   BIO *bio = CHECK_OBJECT(1, BIO, "openssl.bio");
   int  nbio = lua_toboolean(L, 2);
@@ -531,7 +576,15 @@ static LUA_FUNCTION(openssl_bio_nbio)
   return openssl_pushresult(L, ret);
 }
 
-static LUA_FUNCTION(openssl_bio_retry)
+/***
+check if BIO operation should be retried
+@function retry
+@treturn boolean true if operation should be retried
+@treturn[opt] boolean true if should retry read operation
+@treturn[opt] boolean true if should retry write operation
+@treturn[opt] boolean true if should retry special I/O operation
+*/
+static int openssl_bio_retry(lua_State *L)
 {
   BIO *bio = CHECK_OBJECT(1, BIO, "openssl.bio");
   int  retry;
@@ -550,10 +603,11 @@ static LUA_FUNCTION(openssl_bio_retry)
 }
 
 /***
-reset bio
+reset bio to initial state
 @function reset
+@treturn boolean true on success, false on failure
 */
-static LUA_FUNCTION(openssl_bio_reset)
+static int openssl_bio_reset(lua_State *L)
 {
   BIO *bio = CHECK_OBJECT(1, BIO, "openssl.bio");
   luaL_argcheck(L, bio, 1, "Already closed");
@@ -569,7 +623,7 @@ push bio append to chain of bio, if want to free a chain use free_all()
 @tparam bio append
 @treturn bio
 */
-static LUA_FUNCTION(openssl_bio_push)
+static int openssl_bio_push(lua_State *L)
 {
   BIO *bio = CHECK_OBJECT(1, BIO, "openssl.bio");
   BIO *append = CHECK_OBJECT(2, BIO, "openssl.bio");
@@ -587,9 +641,11 @@ static LUA_FUNCTION(openssl_bio_push)
 /***
 remove bio from chain
 @function pop
-@tparam bio toremove
+@tparam openssl.bio toremove
+@treturn[1] openssl.bio removed bio object
+@treturn[2] nil if no bio was removed
 */
-static LUA_FUNCTION(openssl_bio_pop)
+static int openssl_bio_pop(lua_State *L)
 {
   BIO *bio = CHECK_OBJECT(1, BIO, "openssl.bio");
   BIO *end;
@@ -611,7 +667,7 @@ get mem data, only support mem bio object
 @function get_mem
 @treturn string
 */
-static LUA_FUNCTION(openssl_bio_get_mem)
+static int openssl_bio_get_mem(lua_State *L)
 {
   BUF_MEM *mem;
   BIO     *bio = CHECK_OBJECT(1, BIO, "openssl.bio");
@@ -625,7 +681,13 @@ static LUA_FUNCTION(openssl_bio_get_mem)
   return ret == 1 ? 1 : openssl_pushresult(L, ret);
 }
 
-static LUA_FUNCTION(openssl_bio_get_md)
+/***
+get message digest from BIO filter chain
+@function get_md
+@treturn evp_md|nil message digest object or nil if not found
+@treturn evp_md_ctx|nil message digest context or nil if not found
+*/
+static int openssl_bio_get_md(lua_State *L)
 {
   int  ret = 0;
   BIO *bio = CHECK_OBJECT(1, BIO, "openssl.bio");
@@ -644,7 +706,12 @@ static LUA_FUNCTION(openssl_bio_get_md)
   return ret;
 }
 
-static LUA_FUNCTION(openssl_bio_next)
+/***
+get next BIO in the filter chain
+@function next
+@treturn bio|nil next BIO object in chain or nil if none
+*/
+static int openssl_bio_next(lua_State *L)
 {
   BIO *bio = CHECK_OBJECT(1, BIO, "openssl.bio");
 
@@ -657,7 +724,12 @@ static LUA_FUNCTION(openssl_bio_next)
   return bio ? 1 : 0;
 }
 
-static LUA_FUNCTION(openssl_bio_cipher_status)
+/***
+get cipher status for BIO
+@function cipher_status
+@treturn boolean cipher status
+*/
+static int openssl_bio_cipher_status(lua_State *L)
 {
   BIO *bio = CHECK_OBJECT(1, BIO, "openssl.bio");
 
@@ -672,9 +744,9 @@ setup ready and accept client connect
 @function accept
 @tparam[opt=false] boolean setup true for setup accept bio, false or none will accept client connect
 @treturn[1] boolean result only when setup is true
-@treturn[2] bio accpeted bio object
+@treturn[2] openssl.bio accepted bio object
 */
-static LUA_FUNCTION(openssl_bio_accept)
+static int openssl_bio_accept(lua_State *L)
 {
   int  ret;
   BIO *bio = CHECK_OBJECT(1, BIO, "openssl.bio");
@@ -696,8 +768,9 @@ static LUA_FUNCTION(openssl_bio_accept)
 /***
 shutdown SSL or TCP connection
 @function shutdown
+@treturn bio returns self for method chaining
 */
-static LUA_FUNCTION(openssl_bio_shutdown)
+static int openssl_bio_shutdown(lua_State *L)
 {
   BIO *bio = CHECK_OBJECT(1, BIO, "openssl.bio");
 
@@ -719,10 +792,10 @@ static LUA_FUNCTION(openssl_bio_shutdown)
 
 /***
 get ssl object assosited with bio object
-@function get_ssl
+@function ssl
 @treturn ssl
 */
-static LUA_FUNCTION(openssl_bio_get_ssl)
+static int openssl_bio_get_ssl(lua_State *L)
 {
   BIO *bio = CHECK_OBJECT(1, BIO, "openssl.bio");
   SSL *ssl = NULL;
@@ -743,7 +816,7 @@ do TCP or SSL connect
 @function connect
 @treturn booolean result true for success and others for fail
 */
-static LUA_FUNCTION(openssl_bio_connect)
+static int openssl_bio_connect(lua_State *L)
 {
   BIO *bio = CHECK_OBJECT(1, BIO, "openssl.bio");
   int  ret;
@@ -758,7 +831,7 @@ do handshake of TCP or SSL connection
 @function handshake
 @treturn boolean result true for success, and others for fail
 */
-static LUA_FUNCTION(openssl_bio_handshake)
+static int openssl_bio_handshake(lua_State *L)
 {
   BIO *bio = CHECK_OBJECT(1, BIO, "openssl.bio");
   int  ret;
@@ -779,7 +852,7 @@ set fd of bio object
 @tparam number fd
 @treturn number fd
 */
-static LUA_FUNCTION(openssl_bio_fd)
+static int openssl_bio_fd(lua_State *L)
 {
   BIO *bio = CHECK_OBJECT(1, BIO, "openssl.bio");
   int  type;
@@ -806,7 +879,13 @@ static LUA_FUNCTION(openssl_bio_fd)
 # define BIO_get_fp(b,fpp)       BIO_ctrl(b,BIO_C_GET_FILE_PTR,0,(char *)fpp)
 */
 
-static LUA_FUNCTION(openssl_bio_seek)
+/***
+seek to position in BIO
+@function seek
+@tparam number offset position offset to seek to
+@treturn number new position after seek
+*/
+static int openssl_bio_seek(lua_State *L)
 {
   BIO *bio = CHECK_OBJECT(1, BIO, "openssl.bio");
   int  type, ofs, ret;
@@ -822,7 +901,12 @@ static LUA_FUNCTION(openssl_bio_seek)
   return 1;
 }
 
-static LUA_FUNCTION(openssl_bio_tell)
+/***
+get current position in BIO
+@function tell
+@treturn number current position in the BIO
+*/
+static int openssl_bio_tell(lua_State *L)
 {
   BIO *bio = CHECK_OBJECT(1, BIO, "openssl.bio");
   int  type, ret;
@@ -933,7 +1017,7 @@ set callback function of bio information
 @tparam function callback
 @treturn boolean result true for success, and others for fail
 */
-static LUA_FUNCTION(openssl_bio_set_callback)
+static int openssl_bio_set_callback(lua_State *L)
 {
   BIO *bio = CHECK_OBJECT(1, BIO, "openssl.bio");
   int  ret;
@@ -949,7 +1033,7 @@ return pending length of bytes to read and write
 @function pending
 @treturn number pending of read, followed by pending of write
 */
-static LUA_FUNCTION(openssl_bio_pending)
+static int openssl_bio_pending(lua_State *L)
 {
   BIO *bio = CHECK_OBJECT(1, BIO, "openssl.bio");
 
@@ -962,6 +1046,8 @@ static LUA_FUNCTION(openssl_bio_pending)
 /***
 close bio
 @function close
+@tparam[opt=false] boolean free_all if true, free entire BIO chain; if false, free only this BIO
+@treturn number always returns 0
 */
 
 static luaL_Reg bio_funs[] = {

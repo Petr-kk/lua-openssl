@@ -2,22 +2,24 @@ name: CI
 
 on:
   push:
-    branches: [ "master", "ci" ]
+    branches: [ "master", "ci", "v0.x" ]
     tags:
       - v?[0-9].[0-9]+.[0-9]+-[0-9]+
   pull_request:
     # The branches below must be a subset of the branches above
-    branches: [ "master" ]
+    branches: [ "master", "v0.x" ]
 
 jobs:
   build:
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     strategy:
       matrix:
-        os: [macos-13, ubuntu-latest]
-        luarocks_version: [3.12.0]
-        lua_version: [luajit2.1, lua5.1, lua5.2, lua5.3, lua5.4]
-        openssl_version: [openssl-1.0.2u, openssl-1.1.1w, openssl-3.0.17, openssl-3.5.1]
+        os: [macos-15-intel, ubuntu-latest]
+        luarocks_version: [3.13.0]
+        lua_version: [luajit2.1, lua5.1, lua5.3, lua5.4, lua5.5]
+        openssl_version: [openssl-1.0.2u, openssl-1.1.1w, openssl-3.0.22, openssl-3.5.8, openssl-3.6.4, openssl-4.0.2]
     env:
       MACOSX_DEPLOYMENT_TARGET: 10.12
       LUAROCKS: ${{ matrix.luarocks_version }}
@@ -41,14 +43,149 @@ jobs:
       run:
         PKG_CONFIG_PATH=$HOME/.usr/lib64/pkgconfig:$HOME/.usr/lib/pkgconfig PATH=$HOME/.usr/bin:$PATH LD_LIBRARY_PATH=$HOME/.usr/lib64:$HOME/.usr/lib make test
 
+  build-msvc:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64]
+
+    steps:
+    - name: Setup MSVC Developer Prompt
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: ${{ matrix.arch }}
+
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Setup LuaJIT
+      run: |
+        Write-Host "Cloning LuaJIT..."
+        git clone https://github.com/LuaJIT/LuaJIT.git C:\luajit
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+        Write-Host "Building LuaJIT..."
+        cd C:\luajit\src
+        cmd /c "msvcbuild.bat"
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+        Write-Host "Copying LuaJIT files..."
+        copy luajit.exe C:\
+        copy lua51.* C:\
+
+        Write-Host "LuaJIT setup complete"
+        C:\luajit.exe -v
+
+    - name: Setup vcpkg and Install OpenSSL
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        Write-Host "Installing OpenSSL via vcpkg..."
+        # vcpkg is pre-installed on GitHub Actions Windows runners
+        # Install OpenSSL with static linking (:x64-windows-static triplet)
+        vcpkg install openssl:x64-windows-static
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+        Write-Host "OpenSSL installed successfully"
+
+        # vcpkg packages are installed to $env:VCPKG_INSTALLATION_ROOT
+        $VCPKG_ROOT = $env:VCPKG_INSTALLATION_ROOT
+        Write-Host "vcpkg root: $VCPKG_ROOT"
+
+        # Verify OpenSSL installation
+        $OPENSSL_DIR = "$VCPKG_ROOT\installed\x64-windows-static"
+        if (Test-Path "$OPENSSL_DIR\tools\openssl\openssl.exe") {
+          & "$OPENSSL_DIR\tools\openssl\openssl.exe" version
+        }
+
+        # Show installed files for debugging
+        Write-Host "OpenSSL include directory:"
+        Get-ChildItem "$OPENSSL_DIR\include\openssl" | Select-Object -First 5 | Format-Table Name
+        Write-Host "OpenSSL library directory:"
+        Get-ChildItem "$OPENSSL_DIR\lib" | Where-Object { $_.Extension -eq ".lib" } | Format-Table Name
+
+    - name: Update config.win
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        # vcpkg installs to a standard location
+        $VCPKG_ROOT = $env:VCPKG_INSTALLATION_ROOT
+        $OPENSSL_DIR = "$VCPKG_ROOT\installed\x64-windows-static"
+
+        Write-Host "Using vcpkg OpenSSL from: $OPENSSL_DIR"
+
+        # vcpkg uses standard naming: libcrypto.lib and libssl.lib
+        $CRYPTO_LIB = "$OPENSSL_DIR\lib\libcrypto.lib"
+        $SSL_LIB = "$OPENSSL_DIR\lib\libssl.lib"
+
+        # Verify libraries exist
+        if (-not (Test-Path $CRYPTO_LIB)) {
+          Write-Host "ERROR: Could not find $CRYPTO_LIB"
+          exit 1
+        }
+        if (-not (Test-Path $SSL_LIB)) {
+          Write-Host "ERROR: Could not find $SSL_LIB"
+          exit 1
+        }
+
+        Write-Host "Using OpenSSL libraries:"
+        Write-Host "  Crypto: $CRYPTO_LIB"
+        Write-Host "  SSL: $SSL_LIB"
+
+        # Create config.win
+        "# Installation directories" | Out-File -FilePath config.win -Encoding ASCII
+        "# System's libraries directory (where binary libraries are installed)" | Out-File -FilePath config.win -Append -Encoding ASCII
+        "" | Out-File -FilePath config.win -Append -Encoding ASCII
+        "# Lua includes and lib" | Out-File -FilePath config.win -Append -Encoding ASCII
+        'LUA_INC= c:\luajit\src' | Out-File -FilePath config.win -Append -Encoding ASCII
+        'LUA_LIB= c:\luajit\src\lua51.lib' | Out-File -FilePath config.win -Append -Encoding ASCII
+        "" | Out-File -FilePath config.win -Append -Encoding ASCII
+        "# Openssl include and lib" | Out-File -FilePath config.win -Append -Encoding ASCII
+        "OPENSSL_INC= $OPENSSL_DIR\include" | Out-File -FilePath config.win -Append -Encoding ASCII
+        "OPENSSL_LIB= $CRYPTO_LIB $SSL_LIB" | Out-File -FilePath config.win -Append -Encoding ASCII
+        "" | Out-File -FilePath config.win -Append -Encoding ASCII
+        'LIBNAME= $T.dll' | Out-File -FilePath config.win -Append -Encoding ASCII
+        "" | Out-File -FilePath config.win -Append -Encoding ASCII
+        "# Compilation directives" | Out-File -FilePath config.win -Append -Encoding ASCII
+        "WARN= /O2" | Out-File -FilePath config.win -Append -Encoding ASCII
+        'INCS= /I$(LUA_INC) /I$(OPENSSL_INC) /Ideps' | Out-File -FilePath config.win -Append -Encoding ASCII
+        'CFLAGS= /DWIN32_LEAN_AND_MEAN /MT $(WARN) $(INCS)' | Out-File -FilePath config.win -Append -Encoding ASCII
+        "CC= cl" | Out-File -FilePath config.win -Append -Encoding ASCII
+        "" | Out-File -FilePath config.win -Append -Encoding ASCII
+
+    - name: Build
+      run: |
+        Write-Host "Building lua-openssl..."
+        nmake -f Makefile.win lib
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        Write-Host "Build complete"
+        dir src\openssl.dll
+
+    - name: Test
+      run: |
+        Write-Host "Running tests..."
+        cd test
+        $env:LUA_PATH = "?.lua;"
+        $env:LUA_CPATH = "C:\?.dll;..\src\?.dll"
+        # Static linking - no OpenSSL DLLs needed at runtime
+        C:\luajit.exe test.lua
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        Write-Host "Tests complete"
+
   deploy:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [build]
+    needs: [build, build-msvc]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       WITH_LUA_ENGINE: LuaJIT
       LUA: luajit2.1
-      LUAROCKS: 3.12.0
+      LUAROCKS: 3.13.0
     steps:
     - uses: actions/checkout@v4
       with:

@@ -1,3 +1,14 @@
+/***
+compat module for OpenSSL version compatibility
+
+This module provides compatibility functions for different versions
+of OpenSSL, ensuring that lua-openssl works across multiple OpenSSL
+versions by providing missing functions for older versions.
+
+@module compat
+@usage
+  -- Internal compatibility module
+*/
 #include "openssl.h"
 #include "private.h"
 
@@ -100,14 +111,16 @@ RSA_get0_crt_params(const RSA *r, const BIGNUM **dmp1, const BIGNUM **dmq1, cons
   if (iqmp != NULL) *iqmp = r->iqmp;
 }
 
+#if LIBRESSLV_LESS(0x4020000FL) || !defined(LIBRESSL_VERSION_NUMBER)
 RSA *
-EVP_PKEY_get0_RSA(EVP_PKEY *pkey)
+EVP_PKEY_get0_RSA(EVP_PKEY_GET0_CONST(EVP_PKEY) pkey)
 {
   if (pkey->type != EVP_PKEY_RSA) {
     return NULL;
   }
   return pkey->pkey.rsa;
 }
+#endif
 
 int
 RSA_set0_key(RSA *r, BIGNUM *n, BIGNUM *e, BIGNUM *d)
@@ -210,14 +223,16 @@ DSA_bits(const DSA *dsa)
   return BN_num_bits(dsa->p);
 }
 
+#if LIBRESSLV_LESS(0x4020000FL) || !defined(LIBRESSL_VERSION_NUMBER)
 DSA *
-EVP_PKEY_get0_DSA(EVP_PKEY *pkey)
+EVP_PKEY_get0_DSA(EVP_PKEY_GET0_CONST(EVP_PKEY) pkey)
 {
   if (pkey->type != EVP_PKEY_DSA) {
     return NULL;
   }
   return pkey->pkey.dsa;
 }
+#endif
 
 void
 DSA_get0_pqg(const DSA *d, const BIGNUM **p, const BIGNUM **q, const BIGNUM **g)
@@ -281,9 +296,10 @@ DSA_set0_key(DSA *d, BIGNUM *pub_key, BIGNUM *priv_key)
 }
 #endif
 
+#if LIBRESSLV_LESS(0x4020000FL) || !defined(LIBRESSL_VERSION_NUMBER)
 #ifndef OPENSSL_NO_EC
 EC_KEY *
-EVP_PKEY_get0_EC_KEY(EVP_PKEY *pkey)
+EVP_PKEY_get0_EC_KEY(EVP_PKEY_GET0_CONST(EVP_PKEY) pkey)
 {
   if (pkey->type != EVP_PKEY_EC) {
     return NULL;
@@ -294,13 +310,14 @@ EVP_PKEY_get0_EC_KEY(EVP_PKEY *pkey)
 
 #ifndef OPENSSL_NO_DH
 DH *
-EVP_PKEY_get0_DH(EVP_PKEY *pkey)
+EVP_PKEY_get0_DH(EVP_PKEY_GET0_CONST(EVP_PKEY) pkey)
 {
   if (pkey->type != EVP_PKEY_DH) {
     return NULL;
   }
   return pkey->pkey.dh;
 }
+#endif
 
 int
 DH_bits(const DH *dh)
@@ -645,3 +662,63 @@ i2d_re_X509_tbs(X509 *x, unsigned char **pp)
   return i2d_X509_CINF(x->cert_info, pp);
 }
 #endif /* IS_LIBRESSL() && LIBRESSLV_LESS(0x3050000fL)*/
+
+/* EVP_PKEY_dup fallback for OpenSSL < 3.0 and LibreSSL.
+ * Uses BIO-based serialization round-trip to duplicate the key.
+ * First tries PKCS#8 PrivateKeyInfo (for private keys),
+ * then falls back to SubjectPublicKeyInfo (for public keys). */
+#if OPENSSL_VERSION_NUMBER < 0x30000000L || defined(LIBRESSL_VERSION_NUMBER)
+EVP_PKEY *
+EVP_PKEY_dup(EVP_PKEY *pkey)
+{
+  EVP_PKEY *dup = NULL;
+  BIO *bio = NULL;
+  unsigned char *buf = NULL;
+  long len;
+
+  if (pkey == NULL)
+    return NULL;
+
+  /* Try PKCS#8 PrivateKeyInfo round-trip first (works for private keys) */
+  bio = BIO_new(BIO_s_mem());
+  if (bio == NULL)
+    return NULL;
+
+  if (i2d_PKCS8PrivateKey_bio(bio, pkey, NULL, NULL, 0, NULL, NULL)) {
+    len = BIO_get_mem_data(bio, NULL);
+    if (len > 0) {
+      buf = OPENSSL_malloc((size_t)len);
+      if (buf) {
+        if (BIO_read(bio, buf, len) == len) {
+          const unsigned char *pp = buf;
+          dup = d2i_AutoPrivateKey(NULL, &pp, len);
+        }
+        OPENSSL_free(buf);
+        buf = NULL;
+      }
+    }
+  }
+
+  if (dup == NULL) {
+    /* Try SubjectPublicKeyInfo round-trip (works for public keys) */
+    (void)BIO_reset(bio);
+    if (i2d_PUBKEY_bio(bio, pkey)) {
+      len = BIO_get_mem_data(bio, NULL);
+      if (len > 0) {
+        buf = OPENSSL_malloc((size_t)len);
+        if (buf) {
+          if (BIO_read(bio, buf, len) == len) {
+            const unsigned char *pp = buf;
+            dup = d2i_PUBKEY(NULL, &pp, len);
+          }
+          OPENSSL_free(buf);
+        }
+      }
+    }
+  }
+
+  BIO_free(bio);
+  return dup;
+}
+#endif
+

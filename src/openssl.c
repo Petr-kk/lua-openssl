@@ -50,7 +50,7 @@ hex encode or decode string
 @tparam[opt=true] boolean encode true to encoed, false to decode
 @treturn string
 */
-static LUA_FUNCTION(openssl_hex)
+static int openssl_hex(lua_State *L)
 {
   size_t      l = 0;
   const char *s = luaL_checklstring(L, 1, &l);
@@ -82,7 +82,7 @@ base64 encode or decode
 @tparam[opt=true] boolean NO_NL default true without newline, false with newline
 @treturn string
 */
-static LUA_FUNCTION(openssl_base64)
+static int openssl_base64(lua_State *L)
 {
   BIO     *inp = load_bio_object(L, 1);
   int      encode = lua_isnone(L, 2) ? 1 : lua_toboolean(L, 2);
@@ -135,7 +135,7 @@ get method names
 @tparam string type support 'cipher','digests','pkeys','comps'
 @treturn table as array
 */
-static LUA_FUNCTION(openssl_list)
+static int openssl_list(lua_State *L)
 {
   static int options[] = { OBJ_NAME_TYPE_MD_METH,
                            OBJ_NAME_TYPE_CIPHER_METH,
@@ -166,21 +166,24 @@ failed, followed by string type error _reason_ and number type error _code_,
 _code_ can pass to openssl.error() to get more error information.
 
 @function error
-@tparam[opt] number error, default use ERR_get_error() return value
+@tparam[opt] number error default use ERR_get_error() return value
 @treturn string reason
 @treturn string library name
 @treturn number errcode
 @treturn string function name if available
 @treturn boolean indicates whether a given error code is a fatal error
 */
-static LUA_FUNCTION(openssl_error_string)
+static int openssl_error_string(lua_State *L)
 {
-  unsigned long val = ERR_get_error();
+  unsigned long  val = ERR_get_error();
+  const char    *reason;
   if (val == 0) return 0;
 
   val = (unsigned long)luaL_optinteger(L, 1, val);
 
-  lua_pushstring(L, ERR_reason_error_string(val));
+  /* ERR_reason_error_string() may return NULL; never push NULL as a string */
+  reason = ERR_reason_error_string(val);
+  lua_pushstring(L, reason ? reason : "UNKNOWN ERROR");
   lua_pushstring(L, ERR_lib_error_string(val));
   lua_pushinteger(L, val);
 
@@ -202,8 +205,9 @@ static LUA_FUNCTION(openssl_error_string)
 /***
 Empties the current thread's error queue, helps reduce memory usage.
 @function clear_error
+@treturn nil always returns nil
 */
-static LUA_FUNCTION(openssl_clear_error)
+static int openssl_clear_error(lua_State *L)
 {
   ERR_clear_error();
   return 0;
@@ -214,7 +218,7 @@ Fetch all error strings from current thread's error queue, and empty the error q
 @function errors
 @treturn string
 */
-static LUA_FUNCTION(openssl_errors)
+static int openssl_errors(lua_State *L)
 {
   int  ret = 0;
   BIO *out = BIO_new(BIO_s_mem());
@@ -238,6 +242,9 @@ mixes the num bytes at buf into the PRNG state.
 @tparam string seed data to seed random generator
 @tparam number entropy the lower bound of an estimate of how much randomness is contained in buf,
 measured in bytes.
+@treturn boolean true if successful
+@treturn[2] nil if error occurs
+@treturn[2] string error message if error occurs
 */
 static int
 openssl_random_add(lua_State *L)
@@ -298,7 +305,7 @@ openssl_random_write(lua_State *L)
 /***
 get random generator state
 @function rand_status
-@tparam boolean result true for sucess
+@treturn boolean true if PRNG is sufficiently seeded, false otherwise
 */
 static int
 openssl_random_status(lua_State *L)
@@ -313,7 +320,7 @@ get random bytes
 @tparam number length
 @treturn string
 */
-static LUA_FUNCTION(openssl_random_bytes)
+static int openssl_random_bytes(lua_State *L)
 {
   long length = luaL_checkint(L, 1);
 
@@ -363,6 +370,11 @@ openssl_fips_mode(lua_State *L)
 }
 
 #ifndef OPENSSL_NO_CRYPTO_MDEBUG
+/***
+get memory leak report
+@function mem_leaks
+@treturn string memory leak report from OpenSSL
+*/
 static int
 openssl_mem_leaks(lua_State *L)
 {
@@ -381,7 +393,7 @@ openssl_mem_leaks(lua_State *L)
 get openssl engine object
 @function engine
 @tparam string engine_id
-@treturn engine
+@treturn openssl.engine
 */
 static const luaL_Reg eay_functions[] = {
   { "version",     openssl_version       },
@@ -409,7 +421,7 @@ static const luaL_Reg eay_functions[] = {
 };
 
 #if defined(OPENSSL_THREADS) && \
-    (OPENSSL_VERSION_NUMBER < 0x30000000L || defined(LIBRESSL_VERSION_NUMBER))
+    (OPENSSL_VERSION_NUMBER < 0x10100000L || defined(LIBRESSL_VERSION_NUMBER))
 void CRYPTO_thread_setup(void);
 void CRYPTO_thread_cleanup(void);
 #endif
@@ -436,15 +448,16 @@ openssl_finalize(void)
 #endif
 
   CONF_modules_unload(1);
+
+#if (OPENSSL_VERSION_NUMBER < 0x10100000L || defined(LIBRESSL_VERSION_NUMBER))
   OBJ_cleanup();
   EVP_cleanup();
 #ifndef OPENSSL_NO_ENGINE
   ENGINE_cleanup();
 #endif
+
   CRYPTO_cleanup_all_ex_data();
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
   ERR_remove_thread_state(NULL);
-#endif
   RAND_cleanup();
   ERR_free_strings();
 #if !defined(OPENSSL_NO_COMP) && !defined(LIBRESSL_VERSION_NUMBER)
@@ -459,6 +472,8 @@ openssl_finalize(void)
 #endif
 
   CONF_modules_free();
+
+#endif /* (OPENSSL_VERSION_NUMBER < 0x10100000L || defined(LIBRESSL_VERSION_NUMBER) */
 
 #ifndef OPENSSL_NO_CRYPTO_MDEBUG
 #if !(defined(OPENSSL_NO_STDIO) || defined(OPENSSL_NO_FP_API))
@@ -493,30 +508,48 @@ openssl_initialize()
 #if (OPENSSL_VERSION_NUMBER < 0x30000000L || defined(LIBRESSL_VERSION_NUMBER))
   atexit(openssl_finalize);
 
+#if (OPENSSL_VERSION_NUMBER < 0x10100000L || defined(LIBRESSL_VERSION_NUMBER))
   CRYPTO_thread_setup();
 
   OpenSSL_add_all_ciphers();
   OpenSSL_add_all_digests();
   SSL_library_init();
 
+  ERR_load_crypto_strings();
+#else
+  OPENSSL_init_ssl(OPENSSL_INIT_ENGINE_ALL_BUILTIN |
+                   OPENSSL_INIT_ENGINE_OPENSSL |
+                   OPENSSL_INIT_LOAD_CRYPTO_STRINGS |
+                   OPENSSL_INIT_LOAD_SSL_STRINGS |
+                   OPENSSL_INIT_ADD_ALL_CIPHERS |
+                   OPENSSL_INIT_ADD_ALL_DIGESTS,
+                   NULL);
+#endif
+
   ERR_load_ERR_strings();
   ERR_load_EVP_strings();
-  ERR_load_crypto_strings();
+
   ERR_load_SSL_strings();
   ERR_load_BN_strings();
 #ifndef OPENSSL_NO_CMS
   ERR_load_CMS_strings();
 #endif
+
+#if (OPENSSL_VERSION_NUMBER < 0x10100000L || defined(LIBRESSL_VERSION_NUMBER))
 #ifndef OPENSSL_NO_ENGINE
   ENGINE_load_openssl();
 #endif
+#endif
+
   ENGINE_load_builtin_engines();
 
   RAND_seed(LOPENSSL_VERSION LUA_VERSION OPENSSL_VERSION_TEXT,
             sizeof(LOPENSSL_VERSION LUA_VERSION OPENSSL_VERSION_TEXT));
 #else
   OPENSSL_init_ssl(OPENSSL_INIT_ENGINE_ALL_BUILTIN |
+#if defined (OPENSSL_INIT_ENGINE_OPENSSL)
                    OPENSSL_INIT_ENGINE_OPENSSL |
+#endif
                    OPENSSL_INIT_LOAD_CRYPTO_STRINGS |
                    OPENSSL_INIT_LOAD_SSL_STRINGS |
                    OPENSSL_INIT_ADD_ALL_CIPHERS |
@@ -573,11 +606,13 @@ luaopen_openssl(lua_State *L)
   luaopen_hmac(L);
   lua_setfield(L, -2, "hmac");
 
-#if (OPENSSL_VERSION_NUMBER >= 0x30000000L)
+#if (OPENSSL_VERSION_NUMBER >= 0x30000000L) && !defined(LIBRESSL_VERSION_NUMBER)
   luaopen_mac(L);
   lua_setfield(L, -2, "mac");
   luaopen_param(L);
   lua_setfield(L, -2, "param");
+  luaopen_provider(L);
+  lua_setfield(L, -2, "provider");
 #endif
   luaopen_kdf(L);
   lua_setfield(L, -2, "kdf");
@@ -613,6 +648,13 @@ luaopen_openssl(lua_State *L)
 
   luaopen_ssl(L);
   lua_setfield(L, -2, "ssl");
+
+#if (OPENSSL_VERSION_NUMBER >= 0x30000000L) && !defined(LIBRESSL_VERSION_NUMBER)
+  /* Register PQC TLS integration methods into ssl.ctx */
+  lua_getfield(L, -1, "ssl");
+  luaopen_ssl_pqc(L);
+  lua_pop(L, 1);
+#endif
 
   /* third part */
   luaopen_bn(L);

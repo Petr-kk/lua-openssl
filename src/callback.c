@@ -4,6 +4,18 @@
 *
 * Author:  george zhao <zhaozg(at)gmail.com>
 \*=========================================================================*/
+
+/***
+callback module for lua-openssl binding
+
+This module provides callback functionality for SSL/TLS operations,
+including certificate verification callbacks and other SSL event handling.
+These callbacks allow customization of SSL/TLS behavior from Lua.
+
+@module callback
+@usage
+  -- Internal module used by SSL module
+*/
 #include <openssl/ssl.h>
 
 #include "openssl.h"
@@ -99,6 +111,13 @@ openssl_verify_cb(int preverify_ok, X509_STORE_CTX *xctx)
   return ctx ? verify_cb(preverify_ok, xctx, L, ssl, ctx) : 0;
 };
 
+/***
+certificate verification callback function
+@function cert_verify_cb
+@tparam x509_store_ctx ctx X509 store context for verification
+@tparam userdata u user data passed to callback
+@treturn number verification result (1 for success, 0 for failure)
+*/
 int
 openssl_cert_verify_cb(X509_STORE_CTX *xctx, void *u)
 {

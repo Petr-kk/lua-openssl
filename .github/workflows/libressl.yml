@@ -2,23 +2,25 @@ name: LibreSSL
 
 on:
   push:
-    branches: [ "master", "ci" ]
+    branches: [ "master", "ci", "v0.x" ]
   pull_request:
     # The branches below must be a subset of the branches above
-    branches: [ "master" ]
+    branches: [ "master", "v0.x" ]
 
 jobs:
   build:
-    runs-on: macos-13
+    runs-on: macos-15-intel
     strategy:
       fail-fast: false
       matrix:
-        luarocks_version: [3.12.0]
+        luarocks_version: [3.13.0]
         lua_version: [luajit2.1]
         openssl_version:
         - libressl-3.8.4
         - libressl-3.9.2
-        - libressl-4.1.0
+        - libressl-4.1.2
+        - libressl-4.2.1
+        - libressl-4.3.2
     env:
       MACOSX_DEPLOYMENT_TARGET: 10.12
       LUAROCKS: ${{ matrix.luarocks_version }}

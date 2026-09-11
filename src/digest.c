@@ -12,13 +12,41 @@ digest module perform digest operations base on OpenSSL EVP API.
 #endif
 
 /***
-list all support digest algs
+EVP_MD digest algorithm object
+
+This object represents an OpenSSL EVP_MD digest algorithm.
+It can be obtained using digest.get() or digest.fetch().
+
+@type openssl.evp_digest
+*/
+
+/***
+EVP_MD_CTX digest context object
+
+This object represents an OpenSSL EVP_MD_CTX digest context.
+It is created using digest.new() and used for hash operations.
+
+@type openssl.evp_digest_ctx
+*/
+
+/***
+list all supported digest algorithms
 
 @function list
-@tparam[opt] boolean alias include alias names for digest alg, default true
-@treturn[table] all methods
+@tparam[opt=true] boolean alias include alias names for digest algorithms
+@treturn table table of digest algorithm names
+-- @see OpenSSL function: EVP_MD_do_all_sorted
+@usage
+  -- Get all digest algorithms with aliases
+  local digests = digest.list()
+  for name, _ in pairs(digests) do
+    print(name)
+  end
+
+  -- Get only primary names (no aliases)
+  local primary_digests = digest.list(false)
 */
-static LUA_FUNCTION(openssl_digest_list)
+static int openssl_digest_list(lua_State *L)
 {
   int aliases = lua_isnone(L, 1) ? 1 : lua_toboolean(L, 1);
   lua_newtable(L);
@@ -28,21 +56,153 @@ static LUA_FUNCTION(openssl_digest_list)
 };
 
 /***
-get evp_digest object
+get EVP_MD digest algorithm object
+
+This function retrieves a digest algorithm object by name, NID, or ASN1 object.
+The returned object can be used with digest.new() to create a digest context.
 
 @function get
-@tparam string|integer|asn1_object alg name, nid or object identity
-@treturn evp_digest digest object mapping EVP_MD in openssl
+@tparam string|integer|openssl.asn1_object alg algorithm name, NID, or ASN1 object
+@treturn[1] openssl.evp_digest digest algorithm object
+@treturn[2] nil if algorithm not found
+@treturn[2] string error message
+@see digest.new
+@see digest.fetch
+@usage
+  local digest = require('openssl').digest
 
-@see evp_digest
+  -- Get digest by name
+  local sha256 = digest.get('SHA256')
+
+  -- Get digest by NID
+  local sha256_nid = digest.get(672)  -- NID for SHA256
+
+  -- Use with digest.new()
+  local ctx = digest.new(sha256)
+  ctx:update('data')
+  local result = ctx:final()
 */
-static LUA_FUNCTION(openssl_digest_get)
+static int openssl_digest_get(lua_State *L)
 {
   const EVP_MD *md = get_digest(L, 1, NULL);
 
   PUSH_OBJECT((void *)md, "openssl.evp_digest");
   return 1;
 }
+
+#if (OPENSSL_VERSION_NUMBER >= 0x30000000L) && !defined(LIBRESSL_VERSION_NUMBER)
+/***
+fetch evp_digest object with provider support (OpenSSL 3.0+)
+
+@function fetch
+@tparam string alg algorithm name (e.g., 'SHA256', 'SHA512')
+@tparam[opt] table options optional table with 'provider' and 'properties' fields
+@treturn openssl.evp_digest digest object mapping EVP_MD in openssl or nil on failure
+@treturn string error message if failed
+
+@usage
+  -- Fetch with default provider
+  local sha256 = digest.fetch('SHA256')
+
+  -- Fetch from specific provider
+  local fips_sha256 = digest.fetch('SHA256', {provider = 'fips', properties = 'fips=yes'})
+
+@see evp_digest
+*/
+static int openssl_digest_fetch(lua_State *L)
+{
+  const char *algorithm = luaL_checkstring(L, 1);
+  const char *provider = NULL;
+  const char *properties = NULL;
+  OSSL_LIB_CTX *libctx = NULL;  /* NULL means default context */
+  EVP_MD *md = NULL;
+
+  /* Parse optional options table */
+  if (lua_istable(L, 2)) {
+    lua_getfield(L, 2, "provider");
+    if (lua_isstring(L, -1)) {
+      provider = lua_tostring(L, -1);
+    }
+    lua_pop(L, 1);
+
+    lua_getfield(L, 2, "properties");
+    if (lua_isstring(L, -1)) {
+      properties = lua_tostring(L, -1);
+    }
+    lua_pop(L, 1);
+  }
+
+  /* If provider is specified, check if it's available */
+  if (provider != NULL) {
+    if (!OSSL_PROVIDER_available(libctx, provider)) {
+      lua_pushnil(L);
+      lua_pushfstring(L, "provider '%s' is not available", provider);
+      return 2;
+    }
+  }
+
+  /* Fetch the algorithm */
+  md = EVP_MD_fetch(libctx, algorithm, properties);
+
+  if (md != NULL) {
+    PUSH_OBJECT(md, "openssl.evp_digest");
+    /* Mark this as a fetched object that needs to be freed */
+    lua_pushboolean(L, 1);
+    lua_rawsetp(L, LUA_REGISTRYINDEX, md);
+    return 1;
+  }
+
+  return openssl_pushresult(L, 0);
+}
+
+/***
+get provider name for a digest (OpenSSL 3.0+)
+
+@function get_provider_name
+@treturn[1] string provider name
+@treturn[2] nil if digest has no provider or provider has no name
+*/
+static int openssl_digest_get_provider_name(lua_State *L)
+{
+  EVP_MD *md = CHECK_OBJECT(1, EVP_MD, "openssl.evp_digest");
+  const OSSL_PROVIDER *prov = EVP_MD_get0_provider(md);
+
+  if (prov != NULL) {
+    const char *name = OSSL_PROVIDER_get0_name(prov);
+    if (name != NULL) {
+      lua_pushstring(L, name);
+      return 1;
+    }
+  }
+
+  lua_pushnil(L);
+  return 1;
+}
+
+/***
+free a fetched evp_digest object (OpenSSL 3.0+)
+
+@function __gc
+@treturn nil always returns nil
+*/
+static int openssl_digest_gc(lua_State *L)
+{
+  EVP_MD *md = CHECK_OBJECT(1, EVP_MD, "openssl.evp_digest");
+
+  /* Check if this is a fetched object that needs to be freed */
+  lua_rawgetp(L, LUA_REGISTRYINDEX, md);
+  if (lua_toboolean(L, -1)) {
+    /* This is a fetched object, free it */
+    EVP_MD_free(md);
+    /* Remove the marker */
+    lua_pushnil(L);
+    lua_rawsetp(L, LUA_REGISTRYINDEX, md);
+  }
+  lua_pop(L, 1);
+
+  return 0;
+}
+#endif
 
 /***
 get evp_digest_ctx object
@@ -53,21 +213,20 @@ get evp_digest_ctx object
 
 @see evp_digest_ctx
 */
-static LUA_FUNCTION(openssl_digest_new)
+static int openssl_digest_new(lua_State *L)
 {
   const EVP_MD *md = get_digest(L, 1, NULL);
   int           ret = 0;
   ENGINE       *e = lua_isnoneornil(L, 2) ? NULL : CHECK_OBJECT(2, ENGINE, "openssl.engine");
-  EVP_MD_CTX   *ctx = EVP_MD_CTX_create();
+  EVP_MD_CTX   *ctx = EVP_MD_CTX_new();
   if (ctx) {
-    EVP_MD_CTX_init(ctx);
     lua_pushlightuserdata(L, e);
     lua_rawsetp(L, LUA_REGISTRYINDEX, ctx);
     ret = EVP_DigestInit_ex(ctx, md, e);
     if (ret == 1) {
       PUSH_OBJECT(ctx, "openssl.evp_digest_ctx");
     } else {
-      EVP_MD_CTX_destroy(ctx);
+      EVP_MD_CTX_free(ctx);
       ret = openssl_pushresult(L, ret);
     }
   }
@@ -83,7 +242,7 @@ quick method to generate digest result
 @tparam[opt] boolean raw binary result return if set true, or hex encoded string default
 @treturn string digest result value
 */
-static LUA_FUNCTION(openssl_digest)
+static int openssl_digest(lua_State *L)
 {
   const EVP_MD *md;
   ENGINE       *eng;
@@ -116,24 +275,25 @@ create digest object for sign
 
 @function signInit
 @tparam string|integer|asn1_object alg name, nid or object identity
-@tparam[opt=nil] engine object
+@tparam[opt=nil] openssl.engine object
 @treturn evp_digest_ctx
 */
-static LUA_FUNCTION(openssl_signInit)
+static int openssl_signInit(lua_State *L)
 {
   const EVP_MD *md = lua_isnil(L, 1) ? NULL : get_digest(L, 1, NULL);
   EVP_PKEY     *pkey = CHECK_OBJECT(2, EVP_PKEY, "openssl.evp_pkey");
   ENGINE       *e = lua_gettop(L) > 2 ? CHECK_OBJECT(3, ENGINE, "openssl.engine") : NULL;
-  EVP_MD_CTX   *ctx = EVP_MD_CTX_create();
+  EVP_MD_CTX   *ctx = EVP_MD_CTX_new();
   int           ret = 0;
 
   if (ctx) {
-    EVP_MD_CTX_init(ctx);
     ret = EVP_DigestSignInit(ctx, NULL, md, e, pkey);
     if (ret == 1) {
       PUSH_OBJECT(ctx, "openssl.evp_digest_ctx");
-    } else
+    } else {
+      EVP_MD_CTX_free(ctx);
       ret = openssl_pushresult(L, ret);
+    }
   }
   return ret;
 }
@@ -143,25 +303,26 @@ create digest object for verify
 
 @function verifyInit
 @tparam string|integer|asn1_object alg name, nid or object identity
-@tparam[opt=nil] engine object
+@tparam[opt=nil] openssl.engine object
 @treturn evp_digest_ctx
 */
-static LUA_FUNCTION(openssl_verifyInit)
+static int openssl_verifyInit(lua_State *L)
 {
   const EVP_MD *md = lua_isnil(L, 1) ? NULL : get_digest(L, 1, NULL);
   EVP_PKEY     *pkey = CHECK_OBJECT(2, EVP_PKEY, "openssl.evp_pkey");
   ENGINE       *e = lua_gettop(L) > 2 ? CHECK_OBJECT(3, ENGINE, "openssl.engine") : NULL;
   EVP_PKEY_CTX *pctx = 0;
-  EVP_MD_CTX   *ctx = EVP_MD_CTX_create();
+  EVP_MD_CTX   *ctx = EVP_MD_CTX_new();
   int           ret = 0;
 
   if (ctx) {
-    EVP_MD_CTX_init(ctx);
     ret = EVP_DigestVerifyInit(ctx, &pctx, md, e, pkey);
     if (ret) {
       PUSH_OBJECT(ctx, "openssl.evp_digest_ctx");
-    } else
+    } else {
+      EVP_MD_CTX_free(ctx);
       ret = openssl_pushresult(L, ret);
+    }
   }
   return ret;
 }
@@ -176,10 +337,10 @@ compute msg digest result
 
 @function digest
 @tparam string msg data to digest
-@tparam[opt] engine, eng
+@tparam[opt] openssl.engine eng
 @treturn string result a binary hash value for msg
 */
-static LUA_FUNCTION(openssl_digest_digest)
+static int openssl_digest_digest(lua_State *L)
 {
   size_t      inl;
   EVP_MD     *md = CHECK_OBJECT(1, EVP_MD, "openssl.evp_digest");
@@ -204,7 +365,7 @@ get infomation of evp_digest object
 @function info
 @treturn table info keys include nid,name size,block_size,pkey_type,flags
 */
-static LUA_FUNCTION(openssl_digest_info)
+static int openssl_digest_info(lua_State *L)
 {
   EVP_MD *md = CHECK_OBJECT(1, EVP_MD, "openssl.evp_digest");
   lua_newtable(L);
@@ -219,27 +380,26 @@ static LUA_FUNCTION(openssl_digest_info)
 }
 
 /***
-create new evp_digest_ctx
-
-@function new
-@tparam[opt] engine, eng
+initialize digest context with message digest
+@function init
+@tparam openssl.evp_digest md message digest algorithm
+@tparam[opt] openssl.engine eng
 @treturn evp_digest_ctx ctx
 @see evp_digest_ctx
 */
-static LUA_FUNCTION(openssl_evp_digest_init)
+static int openssl_evp_digest_init(lua_State *L)
 {
   EVP_MD *md = CHECK_OBJECT(1, EVP_MD, "openssl.evp_digest");
   ENGINE *e = lua_isnoneornil(L, 2) ? NULL : CHECK_OBJECT(2, ENGINE, "openssl.engine");
   int     ret = 0;
 
-  EVP_MD_CTX *ctx = EVP_MD_CTX_create();
+  EVP_MD_CTX *ctx = EVP_MD_CTX_new();
   if (ctx) {
-    EVP_MD_CTX_init(ctx);
     ret = EVP_DigestInit_ex(ctx, md, e);
     if (ret == 1) {
       PUSH_OBJECT(ctx, "openssl.evp_digest_ctx");
     } else {
-      EVP_MD_CTX_destroy(ctx);
+      EVP_MD_CTX_free(ctx);
       ret = openssl_pushresult(L, ret);
     }
   }
@@ -250,7 +410,7 @@ static LUA_FUNCTION(openssl_evp_digest_init)
 create digest object for sign
 
 @function signInit
-@tparam[opt=nil] engine object
+@tparam[opt=nil] openssl.engine object
 @treturn evp_digest_ctx
 */
 
@@ -258,7 +418,7 @@ create digest object for sign
 create digest object for verify
 
 @function verifyInit
-@tparam[opt=nil] engine object
+@tparam[opt=nil] openssl.engine object
 @treturn evp_digest_ctx
 */
 
@@ -273,7 +433,7 @@ get infomation of evp_digest_ctx object
 @function info
 @treturn table info keys include size,block_size,digest
 */
-static LUA_FUNCTION(openssl_digest_ctx_info)
+static int openssl_digest_ctx_info(lua_State *L)
 {
   EVP_MD_CTX *ctx = CHECK_OBJECT(1, EVP_MD_CTX, "openssl.evp_digest_ctx");
 #if OPENSSL_VERSION_NUMBER < 0x30000000
@@ -298,7 +458,7 @@ feed data to do digest
 @tparam string msg data
 @treturn boolean result true for success
 */
-static LUA_FUNCTION(openssl_evp_digest_update)
+static int openssl_evp_digest_update(lua_State *L)
 {
   size_t      inl;
   EVP_MD_CTX *c = CHECK_OBJECT(1, EVP_MD_CTX, "openssl.evp_digest_ctx");
@@ -318,7 +478,7 @@ get result of digest
 @tparam[opt] boolean raw binary or hexadecimal result, default false for hexadecimal result
 @treturn string val hash result
 */
-static LUA_FUNCTION(openssl_evp_digest_final)
+static int openssl_evp_digest_final(lua_State *L)
 {
   EVP_MD_CTX *c = CHECK_OBJECT(1, EVP_MD_CTX, "openssl.evp_digest_ctx");
 
@@ -357,12 +517,18 @@ err:
   return ret;
 }
 
-static LUA_FUNCTION(openssl_digest_ctx_free)
+/***
+release digest context resources
+@function close
+@treturn number 0
+*/
+static int openssl_digest_ctx_free(lua_State *L)
 {
+
   EVP_MD_CTX *ctx = CHECK_OBJECT(1, EVP_MD_CTX, "openssl.evp_digest_ctx");
   lua_pushnil(L);
   lua_rawsetp(L, LUA_REGISTRYINDEX, ctx);
-  EVP_MD_CTX_destroy(ctx);
+  EVP_MD_CTX_free(ctx);
   return 0;
 }
 
@@ -370,8 +536,9 @@ static LUA_FUNCTION(openssl_digest_ctx_free)
 reset evp_diget_ctx to reuse
 
 @function reset
+@treturn boolean true on success, false on failure
 */
-static LUA_FUNCTION(openssl_digest_ctx_reset)
+static int openssl_digest_ctx_reset(lua_State *L)
 {
   EVP_MD_CTX *ctx = CHECK_OBJECT(1, EVP_MD_CTX, "openssl.evp_digest_ctx");
 #if OPENSSL_VERSION_NUMBER < 0x30000000
@@ -387,7 +554,6 @@ static LUA_FUNCTION(openssl_digest_ctx_reset)
   e = (ENGINE *)lua_topointer(L, -1);
   ret = EVP_MD_CTX_reset(ctx);
   if (ret) {
-    EVP_MD_CTX_init(ctx);
     EVP_DigestInit_ex(ctx, md, e);
   }
   return openssl_pushresult(L, ret);
@@ -397,16 +563,10 @@ static LUA_FUNCTION(openssl_digest_ctx_reset)
 retrieve md data
 
 @function data
-@treturn string md_data
+@tparam[opt] string md_data data to set (optional)
+@treturn string|boolean if no parameter given, returns current md_data; if parameter given, returns boolean success status
 */
-
-/***
-restore md data
-
-@function data
-@tparam string md_data
-*/
-static LUA_FUNCTION(openssl_digest_ctx_data)
+static int openssl_digest_ctx_data(lua_State *L)
 {
   EVP_MD_CTX *ctx = CHECK_OBJECT(1, EVP_MD_CTX, "openssl.evp_digest_ctx");
 
@@ -424,17 +584,16 @@ static LUA_FUNCTION(openssl_digest_ctx_data)
   }
 #else
 
-#if defined(LIBRESSL_VERSION_NUMBER)
-  /* without EVP_MD_meth_get_app_datasize */
+#if defined(LIBRESSL_VERSION_NUMBER) || OPENSSL_VERSION_NUMBER >= 0x30000000L
+  /* without EVP_MD_meth_get_app_datasize
+   * LibreSSL does not support this function
+   * OpenSSL 3.0+ deprecated EVP_MD_meth_get_app_datasize in favor of provider-based architecture
+   */
   (void)ctx;
   return 0;
 #else
 
-#if OPENSSL_VERSION_NUMBER < 0x30000000
   const EVP_MD *md = EVP_MD_CTX_md(ctx);
-#else
-  const EVP_MD *md = EVP_MD_CTX_get0_md(ctx);
-#endif
   size_t ctx_size = (size_t)EVP_MD_meth_get_app_datasize(md);
   if (ctx_size == 0) return 0;
 
@@ -453,13 +612,13 @@ static LUA_FUNCTION(openssl_digest_ctx_data)
 }
 
 /***
-feed data for sign to get signature
-
-@function verifyUpdate
-@tparam string data to be signed
+update digest context for signing operation
+@function signUpdate
+@tparam evp_digest_ctx ctx digest context
+@tparam string data data to sign
 @treturn boolean result
 */
-static LUA_FUNCTION(openssl_signUpdate)
+static int openssl_signUpdate(lua_State *L)
 {
   size_t      l;
   int         ret;
@@ -476,7 +635,7 @@ feed data for verify with signature
 @tparam string data to be verified
 @treturn boolean result
 */
-static LUA_FUNCTION(openssl_verifyUpdate)
+static int openssl_verifyUpdate(lua_State *L)
 {
   size_t      l;
   int         ret;
@@ -490,10 +649,10 @@ static LUA_FUNCTION(openssl_verifyUpdate)
 get result of sign
 
 @function signFinal
-@tparam evp_pkey private key to do sign
+@tparam openssl.evp_pkey private key to do sign
 @treturn string singed result
 */
-static LUA_FUNCTION(openssl_signFinal)
+static int openssl_signFinal(lua_State *L)
 {
   EVP_MD_CTX *ctx = CHECK_OBJECT(1, EVP_MD_CTX, "openssl.evp_digest_ctx");
   size_t      siglen = 0;
@@ -517,7 +676,7 @@ get verify result
 @tparam string signature
 @treturn boolean result, true for verify pass
 */
-static LUA_FUNCTION(openssl_verifyFinal)
+static int openssl_verifyFinal(lua_State *L)
 {
   EVP_MD_CTX *ctx = CHECK_OBJECT(1, EVP_MD_CTX, "openssl.evp_digest_ctx");
   size_t      signature_len;
@@ -536,6 +695,11 @@ static luaL_Reg digest_funs[] = {
   { "signInit",   openssl_signInit        },
   { "verifyInit", openssl_verifyInit      },
 
+#if (OPENSSL_VERSION_NUMBER >= 0x30000000L) && !defined(LIBRESSL_VERSION_NUMBER)
+  { "get_provider_name", openssl_digest_get_provider_name },
+  { "__gc",       openssl_digest_gc       },
+#endif
+
   { "__tostring", auxiliar_tostring       },
 
   { NULL,         NULL                    }
@@ -552,7 +716,7 @@ get result of oneshot sign
 @treturn[1] string singed result
 @treturn[2] nil followd by error message
 */
-static LUA_FUNCTION(openssl_oneshot_sign)
+static int openssl_oneshot_sign(lua_State *L)
 {
   EVP_MD_CTX    *ctx = CHECK_OBJECT(1, EVP_MD_CTX, "openssl.evp_digest_ctx");
   size_t         tbslen;
@@ -584,7 +748,7 @@ get result of oneshot verify
 @tparam string signature
 @treturn boolean result, true for verify pass
 */
-static LUA_FUNCTION(openssl_oneshot_verify)
+static int openssl_oneshot_verify(lua_State *L)
 {
   EVP_MD_CTX    *ctx = CHECK_OBJECT(1, EVP_MD_CTX, "openssl.evp_digest_ctx");
   size_t         siglen;
@@ -634,8 +798,30 @@ static const luaL_Reg R[] = {
   { "signInit",   openssl_signInit    },
   { "verifyInit", openssl_verifyInit  },
 
+#if (OPENSSL_VERSION_NUMBER >= 0x30000000L) && !defined(LIBRESSL_VERSION_NUMBER)
+  { "fetch",      openssl_digest_fetch },
+#endif
+
   { NULL,         NULL                }
 };
+
+/***
+EVP_MD digest algorithm object
+
+This object represents an OpenSSL EVP_MD digest algorithm.
+It can be obtained using digest.get() or digest.fetch().
+
+@type openssl.evp_digest
+*/
+
+/***
+EVP_MD_CTX digest context object
+
+This object represents an OpenSSL EVP_MD_CTX digest context.
+It is created using digest.new() and used for hash operations.
+
+@type openssl.evp_digest_ctx
+*/
 
 int
 luaopen_digest(lua_State *L)

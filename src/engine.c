@@ -5,6 +5,18 @@
 * Author:  george zhao <zhaozg(at)gmail.com>
 \*=========================================================================*/
 
+/***
+engine module for lua-openssl binding
+
+OpenSSL engine support allows the use of alternative implementations
+of cryptographic algorithms. Engines can provide hardware acceleration
+or alternative software implementations of cryptographic operations.
+
+@module engine
+@usage
+  engine = require('openssl').engine
+*/
+
 #include <openssl/engine.h>
 #include <openssl/ssl.h>
 
@@ -12,6 +24,15 @@
 #include "private.h"
 
 #ifndef OPENSSL_NO_ENGINE
+
+/* Suppress deprecation warnings for ENGINE API in OpenSSL 3.0+
+ * The ENGINE API is deprecated in favor of the Provider API, but we continue
+ * to use it to maintain backward compatibility. The module may be migrated
+ * to the Provider API in a future major version. */
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
 enum
 {
   TYPE_RSA,
@@ -82,6 +103,11 @@ openssl_engine(lua_State *L)
   return 1;
 }
 
+/***
+get next engine in the list
+@function next
+@treturn engine|nil next engine object or nil if none
+*/
 static int
 openssl_engine_next(lua_State *L)
 {
@@ -95,6 +121,11 @@ openssl_engine_next(lua_State *L)
   return 1;
 }
 
+/***
+get previous engine in the internal list
+@function prev
+@treturn openssl.engine previous engine object or nil if none
+*/
 static int
 openssl_engine_prev(lua_State *L)
 {
@@ -108,6 +139,11 @@ openssl_engine_prev(lua_State *L)
   return 1;
 }
 
+/***
+add engine to the internal list for lookup by id or name
+@function add
+@treturn boolean true on success, false on failure
+*/
 static int
 openssl_engine_add(lua_State *L)
 {
@@ -117,6 +153,11 @@ openssl_engine_add(lua_State *L)
   return 1;
 }
 
+/***
+remove engine from the internal list
+@function remove
+@treturn boolean true on success, false on failure
+*/
 static int
 openssl_engine_remove(lua_State *L)
 {
@@ -126,6 +167,13 @@ openssl_engine_remove(lua_State *L)
   return 1;
 }
 
+/***
+register engine for specific algorithms
+@function register
+@tparam[opt=false] boolean unregister true to unregister, false to register
+@tparam[opt] string algorithms algorithm types to register for (e.g., "ALL", "RSA", "DSA")
+@treturn boolean true on success, false on failure
+*/
 static int
 openssl_engine_register(lua_State *L)
 {
@@ -232,6 +280,13 @@ openssl_engine_register(lua_State *L)
   return 0;
 };
 
+/***
+control engine operations and settings
+@function ctrl
+@tparam number|string cmd control command (number) or command string
+@tparam[opt] any arg command argument (varies by command)
+@treturn boolean|any result depends on command type
+*/
 static int
 openssl_engine_ctrl(lua_State *L)
 {
@@ -281,6 +336,12 @@ openssl_engine_gc(lua_State *L)
   return 0;
 }
 
+/***
+get or set engine identifier
+@function id
+@tparam[opt] string id new engine ID to set
+@treturn string|boolean engine ID (if getting) or success status (if setting)
+*/
 static int
 openssl_engine_id(lua_State *L)
 {
@@ -296,6 +357,12 @@ openssl_engine_id(lua_State *L)
   return 1;
 }
 
+/***
+get or set engine name
+@function name
+@tparam[opt] string name new engine name to set
+@treturn string|boolean engine name (if getting) or success status (if setting)
+*/
 static int
 openssl_engine_name(lua_State *L)
 {
@@ -311,6 +378,12 @@ openssl_engine_name(lua_State *L)
   return 1;
 }
 
+/***
+get or set engine flags
+@function flags
+@tparam[opt] number flags new engine flags to set
+@treturn number|boolean engine flags (if getting) or success status (if setting)
+*/
 static int
 openssl_engine_flags(lua_State *L)
 {
@@ -328,6 +401,11 @@ openssl_engine_flags(lua_State *L)
 int ENGINE_set_ex_data(ENGINE *e, int idx, void *arg);
 void *ENGINE_get_ex_data(const ENGINE *e, int idx);
 */
+/***
+initialize an engine for use
+@function init
+@treturn boolean true on success, false on failure
+*/
 static int
 openssl_engine_init(lua_State *L)
 {
@@ -337,6 +415,11 @@ openssl_engine_init(lua_State *L)
   return 1;
 }
 
+/***
+release an initialized engine
+@function finish
+@treturn boolean true on success, false on failure
+*/
 static int
 openssl_engine_finish(lua_State *L)
 {
@@ -346,6 +429,12 @@ openssl_engine_finish(lua_State *L)
   return 1;
 }
 
+/***
+set engine as default for specified algorithm types
+@function set_default
+@tparam string ... algorithm types ("RSA", "DSA", "DH", "RAND", "ECDH", "ECDSA", "CIPHERS", "DIGESTS", "STORE", "complete")
+@treturn boolean true on success, false on failure
+*/
 static int
 openssl_engine_set_default(lua_State *L)
 {
@@ -397,6 +486,11 @@ openssl_engine_set_default(lua_State *L)
   return openssl_pushresult(L, ret);
 };
 
+/***
+set random number generator engine
+@function set_rand_engine
+@treturn boolean result true for success
+*/
 static int
 openssl_engine_set_rand_engine(lua_State *L)
 {
@@ -405,6 +499,12 @@ openssl_engine_set_rand_engine(lua_State *L)
   return openssl_pushresult(L, ret);
 }
 
+/***
+load private key from engine
+@function load_private_key
+@tparam string key_id key identifier
+@treturn openssl.evp_pkey private key object or nil if failed
+*/
 static int
 openssl_engine_load_private_key(lua_State *L)
 {
@@ -418,6 +518,12 @@ openssl_engine_load_private_key(lua_State *L)
   return openssl_pushresult(L, 0);
 }
 
+/***
+load public key from engine
+@function load_public_key
+@tparam string key_id key identifier
+@treturn openssl.evp_pkey public key object or nil if failed
+*/
 static int
 openssl_engine_load_public_key(lua_State *L)
 {
@@ -431,6 +537,12 @@ openssl_engine_load_public_key(lua_State *L)
   return openssl_pushresult(L, 0);
 }
 
+/***
+load SSL client certificate from engine
+@function load_ssl_client_cert
+@tparam openssl.ssl ssl SSL connection object
+@treturn boolean result true for success
+*/
 static int
 openssl_engine_load_ssl_client_cert(lua_State *L)
 {
@@ -490,4 +602,9 @@ openssl_register_engine(lua_State *L)
   auxiliar_newclass(L, "openssl.engine", eng_funcs);
   return 0;
 }
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+
 #endif

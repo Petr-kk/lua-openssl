@@ -8,13 +8,13 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        openssl_version: [openssl-1.0.2u, openssl-1.1.1w, openssl-3.0.17, openssl-3.5.1]
+        openssl_version: [openssl-1.0.2u, openssl-1.1.1w, openssl-3.0.22, openssl-3.5.8]
     env:
       COVERALLS_GIT_BRANCH: "${{ github.ref }}"
       COVERALLS_REPO_TOKEN: "${{ secrets.COVERALLS_TOKEN }}"
       WITH_LUA_ENGINE: LuaJIT
       LUA: luajit2.1
-      LUAROCKS: 3.12.0
+      LUAROCKS: 3.13.0
       SSL: ${{ matrix.openssl_version }}
       COVERALLS_PARALLEL: ON
       COVERALLS_SERVICE_NAME: github
@@ -66,7 +66,7 @@ jobs:
     env:
       WITH_LUA_ENGINE: LuaJIT
       LUA: luajit2.1
-      LUAROCKS: 3.12.0
+      LUAROCKS: 3.13.0
     steps:
     - uses: actions/checkout@v4
       with:
@@ -75,7 +75,10 @@ jobs:
       run: |
         .github/shell/setup_lua.sh
         export PATH=$HOME/.usr/bin:$PATH
+        $HOME/.usr/bin/luarocks install lpeg
         $HOME/.usr/bin/luarocks install ldoc
+        eval $($HOME/.usr/bin/luarocks path)
+        $HOME/.usr/bin/luajit .github/shell/analyze_ldoc.lua src
         make doc
 
   clang-asan:
@@ -109,3 +112,20 @@ jobs:
       run: sudo apt update && sudo apt install -y luajit libluajit-5.1-dev
     - name: Test
       run: make tsan
+
+  CMake:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    - name: depends
+      run: sudo apt update && sudo apt install -y luajit libluajit-5.1-dev libssl-dev
+    - name: Configure
+      run: cmake -B build -S .
+    - name: Build
+      run: cmake --build build
+    - name: Test
+      run: cd test && LUA_CPATH=../build/?.so luajit test.lua -v

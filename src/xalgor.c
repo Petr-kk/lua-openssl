@@ -82,6 +82,7 @@ openssl_xalgor_cmp(lua_State *L)
 set message digest object to x509_algor
 @function md
 @tparam number|string|evp_md md
+@treturn boolean result true for success
 */
 static int
 openssl_xalgor_md(lua_State *L)
@@ -100,8 +101,8 @@ openssl_xalgor_md(lua_State *L)
 /***
 get x509_algor properties
 @function get
-@tparam asn1_object ident algorithm, nil for fail
-@tparam asn1_string attached paramater value
+@treturn openssl.asn1_object ident of algorithm, nil for fail
+@treturn openssl.asn1_string attached paramater value
 */
 static int
 openssl_xalgor_get(lua_State *L)
@@ -129,7 +130,7 @@ openssl_xalgor_get(lua_State *L)
 /***
 set x509_algor properties
 @function set
-@tparam asn1_object obj ident algorithm in openssl
+@tparam openssl.asn1_object obj ident algorithm in openssl
 @tparam[opt] asn1_string val attached paramater value
 @treturn boolean result true for success, others for fail
 */
@@ -138,6 +139,7 @@ set digest algorithm, alias of set()
 only when OPENSSL_VERSION_NUMBER >= 0x10001000
 @function set
 @tparam string|evp_digest digest algorithm
+@treturn boolean result true for success
 */
 static int
 openssl_xalgor_set(lua_State *L)
@@ -149,7 +151,7 @@ openssl_xalgor_set(lua_State *L)
   obj = OBJ_dup(obj);
   if (val) {
     val = ASN1_STRING_dup(val);
-    ret = X509_ALGOR_set0(alg, obj, val->type, val);
+    ret = X509_ALGOR_set0(alg, obj, ASN1_STRING_type(val), val);
   } else {
     ret = X509_ALGOR_set0(alg, obj, 0, NULL);
   }
@@ -159,7 +161,7 @@ openssl_xalgor_set(lua_State *L)
 /***
 convert x509_algor to txt string of asn1_object
 @function tostring
-@tparam string txt of asn1_object
+@treturn string txt of asn1_object
 */
 static int
 openssl_xalgor_tostring(lua_State *L)
@@ -188,6 +190,7 @@ only when OPENSSL_VERSION_NUMBER >= 0x10002000L
 
 @function equals
 @tparam x509_algor other to compare
+@treturn boolean true if algorithms are equal
 */
 
 static luaL_Reg xalgor_funcs[] = {

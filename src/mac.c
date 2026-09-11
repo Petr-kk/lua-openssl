@@ -5,12 +5,19 @@ It base on EVP_MAC in OpenSSL v3.
 @module mac
 @author  george zhao <zhaozg(at)gmail.com>
 @usage
-  hamc = require('openssl').mac
+  mac = require('openssl').mac
 */
 #include "openssl.h"
 #include "private.h"
 
 #if (OPENSSL_VERSION_NUMBER >= 0x30000000L)
+/***
+create new MAC object
+@function new
+@tparam string algorithm MAC algorithm name (e.g., "HMAC", "CMAC", "GMAC")
+@tparam[opt] string properties optional properties string
+@treturn mac|nil new MAC object or nil on failure
+*/
 static int
 openssl_mac_new(lua_State *L)
 {
@@ -33,6 +40,12 @@ openssl_mac_gc(lua_State *L)
   return 0;
 }
 
+/***
+check if MAC algorithm supports a specific name
+@function is_a
+@tparam string name algorithm name to check
+@treturn boolean true if MAC supports the given name
+*/
 static int
 openssl_mac_is_a(lua_State *L)
 {
@@ -51,6 +64,11 @@ openssl_mac_names_do(const char *name, void *data)
   lua_rawseti(L, -2, len + 1);
 }
 
+/***
+get all names supported by this MAC algorithm
+@function names
+@treturn table array of supported algorithm names
+*/
 static int
 openssl_mac_names(lua_State *L)
 {
@@ -61,6 +79,11 @@ openssl_mac_names(lua_State *L)
   return 1;
 }
 
+/***
+get provider name for this MAC algorithm
+@function provider
+@treturn string name of the provider implementing this MAC
+*/
 static int
 openssl_mac_provider(lua_State *L)
 {
@@ -73,6 +96,13 @@ openssl_mac_provider(lua_State *L)
 
 static int
 openssl_mac_get_params(lua_State *L)
+/***
+get MAC algorithm parameters
+@function get_params
+@tparam table params table of OSSL_PARAM definitions (name, type, value)
+@treturn table|nil resulting parameters or nil with error message on failure
+*/
+
 {
   EVP_MAC    *mac = CHECK_OBJECT(1, EVP_MAC, "openssl.mac");
   OSSL_PARAM *params = openssl_toparams(L, 2);
@@ -87,37 +117,95 @@ openssl_mac_get_params(lua_State *L)
   return ret;
 }
 
-static int
-openssl_mac_ctx_gc(lua_State *L)
+/* mac_ctx userdata carries a small amount of binding-level state on top of
+ * the raw EVP_MAC_CTX. EVP_MAC_final() consumes the context: for CMAC the
+ * final operation is destructive, so calling update() or final() again on
+ * the same context silently produces a second, meaningless tag. Track a
+ * finalized flag and reject any further data-feeding operation; to compute
+ * another tag create a fresh mac.ctx (or dup an unfinalized one). */
+typedef struct {
+  EVP_MAC_CTX *ctx;
+  int finalized;
+} mac_ctx_ud;
+
+static mac_ctx_ud *
+mac_ctx_check(lua_State *L, int idx)
 {
-  EVP_MAC_CTX *ctx = CHECK_OBJECT(1, EVP_MAC_CTX, "openssl.mac_ctx");
-  EVP_MAC_CTX_free(ctx);
-  return 0;
+  return (mac_ctx_ud *)auxiliar_checkclass(L, "openssl.mac_ctx", idx);
 }
 
 static int
-openssl_mac_ctx_dup(lua_State *L)
+mac_ctx_push(lua_State *L, EVP_MAC_CTX *ctx, int finalized)
 {
-  EVP_MAC_CTX *ctx = CHECK_OBJECT(1, EVP_MAC_CTX, "openssl.mac_ctx");
-  EVP_MAC_CTX *clone = EVP_MAC_CTX_dup(ctx);
-  PUSH_OBJECT(clone, "openssl.mac_ctx");
+  mac_ctx_ud *ud = (mac_ctx_ud *)lua_newuserdata(L, sizeof(mac_ctx_ud));
+  ud->ctx = ctx;
+  ud->finalized = finalized;
+  auxiliar_setclass(L, "openssl.mac_ctx", -1);
   return 1;
 }
 
 static int
+mac_ctx_finalized_error(lua_State *L)
+{
+  lua_pushnil(L);
+  lua_pushliteral(L,
+    "MAC context already finalized, create a new mac.ctx to compute another tag");
+  lua_pushinteger(L, 0);
+  return 3;
+}
+
+static int
+openssl_mac_ctx_gc(lua_State *L)
+{
+  mac_ctx_ud *ud = mac_ctx_check(L, 1);
+  if (ud->ctx) {
+    EVP_MAC_CTX_free(ud->ctx);
+    ud->ctx = NULL;
+  }
+  return 0;
+}
+
+/***
+duplicate MAC context
+@function dup
+@treturn mac_ctx duplicated MAC context, inherits the finalized state of
+  the original (a finalized context cannot be fed again)
+*/
+static int
+openssl_mac_ctx_dup(lua_State *L)
+{
+  mac_ctx_ud  *ud = mac_ctx_check(L, 1);
+  EVP_MAC_CTX *clone = EVP_MAC_CTX_dup(ud->ctx);
+  if (clone == NULL)
+    return openssl_pushresult(L, 0);
+  return mac_ctx_push(L, clone, ud->finalized);
+}
+
+/***
+get MAC object from MAC context
+@function mac
+@treturn openssl.mac the MAC object associated with this context
+*/
+static int
 openssl_mac_ctx_mac(lua_State *L)
 {
-  EVP_MAC_CTX *ctx = CHECK_OBJECT(1, EVP_MAC_CTX, "openssl.mac_ctx");
-  EVP_MAC     *mac = EVP_MAC_CTX_get0_mac(ctx);
+  mac_ctx_ud *ud = mac_ctx_check(L, 1);
+  EVP_MAC    *mac = EVP_MAC_CTX_get0_mac(ud->ctx);
   PUSH_OBJECT(mac, "openssl.mac");
   return 1;
 }
 
+/***
+get or set MAC context parameters (not yet implemented)
+@function params
+@treturn nil always returns nil (NYI - Not Yet Implemented)
+@treturn string error message "NYI"
+*/
 static int
 openssl_mac_ctx_params(lua_State *L)
 {
-  EVP_MAC_CTX *ctx = CHECK_OBJECT(1, EVP_MAC_CTX, "openssl.mac_ctx");
-  (void)ctx;
+  mac_ctx_ud *ud = mac_ctx_check(L, 1);
+  (void)ud;
   /*
   int EVP_MAC_CTX_get_params(EVP_MAC_CTX *ctx, OSSL_PARAM params[]);
   int EVP_MAC_CTX_set_params(EVP_MAC_CTX *ctx, const OSSL_PARAM params[]);
@@ -154,10 +242,9 @@ const OSSL_PARAM *EVP_MAC_settable_ctx_params(const EVP_MAC *mac);
 /***
 get mac_ctx object
 
-@function new
-@tparam string|integer|asn1_object alg name, nid or object identity
-@tparam string key secret key
-@tparam[opt] engine engine, nothing with default engine
+@function ctx
+@tparam string|integer|asn1_object alg name, nid or object identity of a digest or cipher algorithm
+@tparam[opt] openssl.engine engine nothing with default engine
 @treturn mac_ctx object mapping MAC_CTX in openssl
 */
 static int
@@ -202,7 +289,7 @@ openssl_mac_ctx_new(lua_State *L)
     if (ctx) {
       ret = EVP_MAC_init(ctx, (const unsigned char *)k, l, params);
       if (ret == 1)
-        PUSH_OBJECT(ctx, "openssl.mac_ctx");
+        mac_ctx_push(L, ctx, 0);
       else {
         ret = openssl_pushresult(L, ret);
         EVP_MAC_CTX_free(ctx);
@@ -213,25 +300,31 @@ openssl_mac_ctx_new(lua_State *L)
   return ret;
 }
 
+/***
+free MAC context resources
+@function close
+@treturn number always returns 0
+*/
 static int
 openssl_mac_ctx_free(lua_State *L)
 {
-  EVP_MAC_CTX *c = CHECK_OBJECT(1, EVP_MAC_CTX, "openssl.mac_ctx");
-  if (!c) return 0;
-  EVP_MAC_CTX_free(c);
-
-  FREE_OBJECT(1);
+  mac_ctx_ud *ud = mac_ctx_check(L, 1);
+  if (ud->ctx) {
+    EVP_MAC_CTX_free(ud->ctx);
+    ud->ctx = NULL;
+  }
   return 0;
 }
 
 /***
-compute mac one step, in module openssl.hamc
+compute mac one step, in module openssl.mac
 
 @function mac
 @tparam evp_digest|string|nid digest digest alg identity
 @tparam string message
 @tparam string key
-@treturn string result binary string
+@tparam[opt=false] boolean raw binary or hex encoded result, default false for hex result
+@treturn string result binary string when raw is true, hex string otherwise
 */
 static int
 openssl_mac(lua_State *L)
@@ -288,53 +381,88 @@ openssl_mac(lua_State *L)
 /***
 feed data to do digest
 
+note: update() is rejected once final() has been called; EVP_MAC_final()
+  consumes the underlying context (a second tag would be meaningless).
+
 @function update
 @tparam string msg data
-*/
+@treturn boolean result true for success
+@treturn[2] nil on failure
+@treturn[2] string error message
+@treturn[2] number error code
+@usage
+local ctx = mac.ctx("aes-128-cbc", key)
+assert(ctx:update("part1"))
+assert(ctx:update("part2"))
+local tag = assert(ctx:final())
+ */
 static int
 openssl_mac_ctx_update(lua_State *L)
 {
   int         ret;
   size_t      l;
   const char *s;
+  mac_ctx_ud *ud = mac_ctx_check(L, 1);
 
-  EVP_MAC_CTX *c = CHECK_OBJECT(1, EVP_MAC_CTX, "openssl.mac_ctx");
+  if (ud->finalized)
+    return mac_ctx_finalized_error(L);
+
   s = luaL_checklstring(L, 2, &l);
 
-  ret = EVP_MAC_update(c, (unsigned char *)s, l);
+  ret = EVP_MAC_update(ud->ctx, (unsigned char *)s, l);
   return openssl_pushresult(L, ret);
 }
 
 /***
 get result of mac
 
+note: final() consumes the context: the returned tag is the final MAC and
+  any further update()/final() call on the same context is rejected with
+  nil, err, code. Create a new mac.ctx to compute another tag.
+
 @function final
 @tparam[opt] string last last part of data
-@tparam[opt] boolean raw binary or hex encoded result, default true for binary result
+@tparam[opt=false] boolean raw binary or hex encoded result, default false for hex result
 @treturn string val hash result
-*/
+@treturn[2] nil on failure
+@treturn[2] string error message
+@treturn[2] number error code
+@usage
+local ctx = mac.ctx("aes-128-cbc", key)
+ctx:update("data")
+local tag_hex = ctx:final()          -- hex string
+local tag_raw = ctx:final(true)      -- binary string
+ */
 static int
 openssl_mac_ctx_final(lua_State *L)
 {
-  EVP_MAC_CTX  *c = CHECK_OBJECT(1, EVP_MAC_CTX, "openssl.mac_ctx");
+  mac_ctx_ud   *ud = mac_ctx_check(L, 1);
   unsigned char digest[EVP_MAX_MD_SIZE];
   size_t        len = sizeof(digest);
   int           raw = 0;
   int           ret = 1;
 
+  if (ud->finalized)
+    return mac_ctx_finalized_error(L);
+
   if (lua_isstring(L, 2)) {
     size_t      l;
     const char *s = luaL_checklstring(L, 2, &l);
-    ret = EVP_MAC_update(c, (unsigned char *)s, l);
+    ret = EVP_MAC_update(ud->ctx, (unsigned char *)s, l);
     raw = (lua_isnone(L, 3)) ? 0 : lua_toboolean(L, 3);
   } else
     raw = (lua_isnone(L, 2)) ? 0 : lua_toboolean(L, 2);
 
   if (ret == 1) {
-    ret = EVP_MAC_final(c, digest, &len, len);
+    ret = EVP_MAC_final(ud->ctx, digest, &len, len);
   }
 
   if (ret == 0) return openssl_pushresult(L, ret);
+
+  /* EVP_MAC_final() consumes the context (for CMAC it is destructive: a
+   * second final() on the same context yields a different, meaningless
+   * tag). Mark the context finalized so update()/final() are rejected. */
+  ud->finalized = 1;
 
   if (raw) {
     lua_pushlstring(L, (char *)digest, len);
@@ -351,12 +479,13 @@ return size of mac value
 
 @function size
 @tparam string msg data
+@treturn number size of MAC value in bytes
 */
 static int
 openssl_mac_ctx_size(lua_State *L)
 {
-  EVP_MAC_CTX *c = CHECK_OBJECT(1, EVP_MAC_CTX, "openssl.mac_ctx");
-  size_t       sz = EVP_MAC_CTX_get_mac_size(c);
+  mac_ctx_ud *ud = mac_ctx_check(L, 1);
+  size_t      sz = EVP_MAC_CTX_get_mac_size(ud->ctx);
 
   lua_pushinteger(L, sz);
   return 1;

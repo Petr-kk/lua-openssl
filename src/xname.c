@@ -10,7 +10,7 @@ x509.name module to mapping X509_NAME to lua object.
 #include "sk.h"
 
 int
-openssl_push_xname_asobject(lua_State *L, X509_NAME *xname)
+openssl_push_xname_asobject(lua_State *L, const X509_NAME *xname)
 {
   const X509_NAME *dup = X509_NAME_dup(xname);
   PUSH_OBJECT(dup, "openssl.x509_name");
@@ -66,7 +66,7 @@ Create x509_name object
 @function new
 @tparam table array include name node
 @tparam[opt] boolean utf8 encode will be use default
-@treturn x509_name mapping to X509_EXTENSION in openssl
+@treturn openssl.x509_name mapping to X509_EXTENSION in openssl
 @usage
   name = require'openssl'.x509.name
   subject = name.new{
@@ -104,7 +104,7 @@ Create x509_name from der string
 
 @function d2i
 @tparam string content DER encoded string
-@treturn x509_name mapping to X509_NAME in openssl
+@treturn openssl.x509_name mapping to X509_NAME in openssl
 */
 static int
 openssl_xname_d2i(lua_State *L)
@@ -207,13 +207,12 @@ openssl_xname_digest(lua_State *L)
 };
 
 /***
-print x509_name to bio object
+print x509_name formatted to string
 
-@function print
-@tparam openssl.bio out output bio object
-@tparam[opt] integer indent for output
-@tparam[opt] integer flags for output
-@treturn boolean result, follow by error message
+@function toprint
+@tparam[opt] integer indent indentation level for output, default 0
+@tparam[opt] integer flags output flags, default 0
+@treturn string|nil formatted name string, or nil with error message on failure
 */
 static int
 openssl_xname_toprint(lua_State *L)
@@ -258,7 +257,7 @@ return x509_name as table
 @function info
 @tparam[opt=false] boolean asobject table key will use asn1_object or short name of asn1_object
 @treturn table names
-@see new
+-- @see OpenSSL function: X509_NAME_get_index_by_NID
 */
 static int
 openssl_xname_info(lua_State *L)
@@ -279,7 +278,7 @@ openssl_xname_info(lua_State *L)
 compare two x509_name
 
 @function cmp
-@tparam x509_name another to compare with
+@tparam openssl.x509_name another to compare with
 @treturn boolean result true for equal or false
 @usage
   name1 = name.new({...})
@@ -299,7 +298,7 @@ openssl_xname_cmp(lua_State *L)
 /***
 make a clone of x509_name
 @function dup
-@treturn x509_name clone
+@treturn openssl.x509_name clone
 */
 static int
 openssl_xname_dup(lua_State *L)
@@ -382,7 +381,7 @@ get x509 name entry by index
 @function get_entry
 @tparam integer index start from 0, and less than xn:entry_count()
 @tparam[opt=false] boolean asobject table key will use asn1_object or short name of asn1_object
-@treturn x509 name entry table
+@treturn openssl.x509 name entry table
 */
 static int
 openssl_xname_get_entry(lua_State *L)

@@ -13,15 +13,15 @@ pkcs12 module to create and parse PKCS#12(PFX) files.
 create and export pkcs12 data
 
 @function export
-@tparam x509 cert
-@tparam evp_pkey pkey
+@tparam openssl.x509 cert
+@tparam openssl.evp_pkey pkey
 @tparam string password
 @tparam[opt=nil] string friendlyname
 @tparam[opt] table|stak_of_x509 extracerts
 @tparam[opt] boolean keytype flag to private key used by MSIE, true for KEY_SIG, or KEY_EX
 @treturn string data
 */
-static LUA_FUNCTION(openssl_pkcs12_export)
+static int openssl_pkcs12_export(lua_State *L)
 {
   X509     *cert = CHECK_OBJECT(1, X509, "openssl.x509");
   EVP_PKEY *priv_key = CHECK_OBJECT(2, EVP_PKEY, "openssl.evp_pkey");
@@ -101,7 +101,7 @@ parse pkcs12 data as lua table
 @tparam string password for pkcs12
 @treturn table result contain 'cert', 'pkey', 'extracerts' keys
 */
-static LUA_FUNCTION(openssl_pkcs12_read)
+static int openssl_pkcs12_read(lua_State *L)
 {
   PKCS12   *p12 = NULL;
   EVP_PKEY *pkey = NULL;

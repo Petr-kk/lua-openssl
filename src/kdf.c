@@ -5,7 +5,7 @@ It base on EVP_KDF in OpenSSL v3.
 @module kdf
 @author  george zhao <zhaozg(at)gmail.com>
 @usage
-  hamc = require('openssl').kdf
+  kdf = require('openssl').kdf
 */
 #include "auxiliar.h"
 #include "lua.h"
@@ -35,7 +35,7 @@ get_kdf(lua_State *L, int idx)
       kdf = EVP_get_digestbyobj(CHECK_OBJECT(idx, ASN1_OBJECT, "openssl.asn1_object"));
     else
 #endif
-    if (auxiliar_getclassudata(L, "openssl.kdf", idx)) 
+    if (auxiliar_getclassudata(L, "openssl.kdf", idx))
     {
       kdf = CHECK_OBJECT(idx, EVP_KDF, "openssl.kdf");
       if (kdf) {
@@ -220,7 +220,7 @@ openssl_kdf_ctx_reset(lua_State *L)
 derive the key
 
 @function derive
-@tparam table paramaters, settable paramaters can be get by `kdf:settable_ctx_params()`
+@tparam table paramaters settable paramaters can be get by `kdf:settable_ctx_params()`
 @treturn string|fail
 */
 static int
@@ -360,6 +360,12 @@ create new openssl.kdf_ctx object
 
 @function fetch
 @treturn openssl.kdf_ctx|fail
+*/
+/***
+create new KDF context
+@function new
+@tparam string algorithm KDF algorithm name
+@treturn kdf_ctx new KDF context object or nil if failed
 */
 static int
 openssl_kdf_ctx_new(lua_State *L)
@@ -621,6 +627,17 @@ luaopen_kdf(lua_State *L)
   AUXILIAR_SET(L, -1, OSSL_KDF_NAME_KBKDF, OSSL_KDF_NAME_KBKDF, string);
 #if defined(OSSL_KDF_NAME_KRB5KDF)
   AUXILIAR_SET(L, -1, OSSL_KDF_NAME_KRB5KDF, OSSL_KDF_NAME_KRB5KDF, string);
+#endif
+
+/* Argon2 KDF names (OpenSSL 3.2+) */
+#if defined(OSSL_KDF_NAME_ARGON2I)
+  AUXILIAR_SET(L, -1, OSSL_KDF_NAME_ARGON2I, OSSL_KDF_NAME_ARGON2I, string);
+#endif
+#if defined(OSSL_KDF_NAME_ARGON2D)
+  AUXILIAR_SET(L, -1, OSSL_KDF_NAME_ARGON2D, OSSL_KDF_NAME_ARGON2D, string);
+#endif
+#if defined(OSSL_KDF_NAME_ARGON2ID)
+  AUXILIAR_SET(L, -1, OSSL_KDF_NAME_ARGON2ID, OSSL_KDF_NAME_ARGON2ID, string);
 #endif
 
   lua_rawset(L, -3);
